@@ -592,31 +592,6 @@
   const WALL_THICKNESS = 15;
   const BASEBOARD_HEIGHT = 8;
 
-  // Create a canvas-based floor texture
-  function createFloorTexture(): THREE.CanvasTexture {
-    const size = 256;
-    const c = document.createElement('canvas');
-    c.width = size; c.height = size;
-    const cx = c.getContext('2d')!;
-    // Hardwood pattern
-    cx.fillStyle = '#c4a882';
-    cx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 32) {
-      for (let x = 0; x < size; x += 64) {
-        const offset = (y / 32) % 2 === 0 ? 0 : 32;
-        cx.fillStyle = y % 64 < 32 ? '#b89b72' : '#d4b892';
-        cx.fillRect(x + offset, y, 62, 30);
-        cx.strokeStyle = '#a08060';
-        cx.lineWidth = 0.5;
-        cx.strokeRect(x + offset, y, 62, 30);
-      }
-    }
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(10, 10);
-    return tex;
-  }
-
   function init() {
     scene = new THREE.Scene();
 
@@ -854,10 +829,9 @@
     rimLight.position.set(-200, 600, 1000);
     scene.add(rimLight);
 
-    // Textured floor
-    const floorTex = createFloorTexture();
+    // Floor — flat, solid-color surface (no tiled texture)
     const floorGeo = new THREE.PlaneGeometry(4000, 4000);
-    const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, side: THREE.DoubleSide, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: '#c4a882', side: THREE.DoubleSide, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     const floorMesh = new THREE.Mesh(floorGeo, floorMat);
     floorMesh.rotation.x = -Math.PI / 2;
     floorMesh.position.y = 0.5;
