@@ -1164,7 +1164,7 @@
    * where exactly one other straight wall shares the endpoint are mitered; anything else
    * (open ends, T-junctions, curved-wall neighbors) falls back to the original flat cut.
    */
-  function computeWallMiters(walls: Wall[]): Map<string, WallMiter> {
+  function computeWallMiters(walls: Wall[], thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)): Map<string, WallMiter> {
     const result = new Map<string, WallMiter>();
     const straightWalls = walls.filter((w) => !w.curvePoint);
 
@@ -1189,7 +1189,7 @@
       const V = atStart ? wall.start : wall.end;
       const d = dirOf(wall);
       const n = { x: -d.y, y: d.x };
-      const r = Math.max(wall.thickness, WALL_THICKNESS) / 2;
+      const r = thicknessOf(wall) / 2;
 
       const others = straightWalls.filter(
         (w) => w.id !== wall.id && (samePoint(w.start, V) || samePoint(w.end, V))
@@ -1199,7 +1199,7 @@
       const other = others[0];
       const od = dirOf(other);
       const on = { x: -od.y, y: od.x };
-      const orr = Math.max(other.thickness, WALL_THICKNESS) / 2;
+      const orr = thicknessOf(other) / 2;
 
       const wPos = { x: V.x + n.x * r, y: V.y + n.y * r };
       const wNeg = { x: V.x - n.x * r, y: V.y - n.y * r };
@@ -1319,6 +1319,10 @@
     const defaultExteriorMat = new THREE.MeshStandardMaterial({ color: 0xd4cfc9, roughness: 0.85 });
     const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d4, roughness: 0.7 });
     const wallMiters = computeWallMiters(floor.walls);
+    // The baseboard is 2 units thicker than its wall (t+2), so it needs its own miter
+    // corners computed at that larger radius — reusing the wall-body corner points here
+    // (computed for the thinner wall radius) leaves a real gap at the outer corner tip.
+    const baseboardMiters = computeWallMiters(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
 
     for (const wall of floor.walls) {
       // Resolve per-side materials: interior and exterior can have independent color/texture
@@ -1474,21 +1478,23 @@
         wallGroup.add(mesh);
       }
 
-      // Baseboard — with gaps at door openings; mirrors the wall body's mitered corners
-      // (using the baseboard's own slightly larger radius) so it doesn't leave the same
-      // gap/overlap crack the wall body used to show.
+      // Baseboard — with gaps at door openings; mirrors the wall body's mitered corners,
+      // using its own miter map (baseboardMiters) computed at the baseboard's own radius
+      // — reusing the wall body's corner points here (computed for a thinner radius)
+      // undershoots the baseboard's actual outer edge and leaves a real gap at the corner.
       const doorOpeningsForBB = floor.doors.filter((d) => d.wallId === wall.id);
+      const bbMiter = baseboardMiters.get(wall.id)!;
       const bbR = (t + 2) / 2;
       const addBaseboardSegment = (segU0: number, segU1: number) => {
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? miter.start.uPos : segU0;
-        const u0Neg = touchesStart ? miter.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? miter.end.uPos : segU1;
-        const u1Neg = touchesEnd ? miter.end.uNeg : segU1;
+        const u0Pos = touchesStart ? bbMiter.start.uPos : segU0;
+        const u0Neg = touchesStart ? bbMiter.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? bbMiter.end.uPos : segU1;
+        const u1Neg = touchesEnd ? bbMiter.end.uNeg : segU1;
         const mid = (segU0 + segU1) / 2;
-        const skipStartCap = touchesStart && miter.start.mitered;
-        const skipEndCap = touchesEnd && miter.end.mitered;
+        const skipStartCap = touchesStart && bbMiter.start.mitered;
+        const skipEndCap = touchesEnd && bbMiter.end.mitered;
 
         const bbGeo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, bbR, 0, BASEBOARD_HEIGHT, skipStartCap, skipEndCap);
         const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
