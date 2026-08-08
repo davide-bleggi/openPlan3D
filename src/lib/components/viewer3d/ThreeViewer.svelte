@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { activeFloor, currentProject, detectedRoomsStore, selectedElementId } from '$lib/stores/project';
-  import type { Floor, Wall, Door, Window as Win, Room, Stair } from '$lib/models/types';
+  import type { Floor, Wall, Door, Window as Win, Room, Stair, Point } from '$lib/models/types';
   import { wallColors, type WallColor } from '$lib/utils/materials';
   import { projectSettings, formatArea } from '$lib/stores/settings';
   import * as THREE from 'three';
@@ -591,6 +591,7 @@
 
   const WALL_THICKNESS = 15;
   const BASEBOARD_HEIGHT = 8;
+  const WALL_JOIN_EPS = 5; // snap distance for matching wall endpoints (mirrors roomDetection.ts)
 
   // Create a canvas-based floor texture
   function createFloorTexture(): THREE.CanvasTexture {
@@ -1150,6 +1151,156 @@
     }
   }
 
+  interface WallMiterEnd { uPos: number; uNeg: number }
+  interface WallMiter { start: WallMiterEnd; end: WallMiterEnd }
+
+  /**
+   * Computes mitered corner cuts for each straight wall so that two walls sharing an
+   * endpoint meet in a single clean seam instead of two independent square-ended boxes
+   * (which leave a gap/overlap and show up as duplicate/crossing edges at the joint).
+   * For a wall end, "pos" is where the +normal (interior-facing) edge should be cut and
+   * "neg" is where the -normal (exterior-facing) edge should be cut, both expressed as a
+   * u-coordinate along the wall's own centerline (0 = wall.start). Only clean corners
+   * where exactly one other straight wall shares the endpoint are mitered; anything else
+   * (open ends, T-junctions, curved-wall neighbors) falls back to the original flat cut.
+   */
+  function computeWallMiters(walls: Wall[]): Map<string, WallMiter> {
+    const result = new Map<string, WallMiter>();
+    const straightWalls = walls.filter((w) => !w.curvePoint);
+
+    const samePoint = (a: Point, b: Point) =>
+      Math.abs(a.x - b.x) < WALL_JOIN_EPS && Math.abs(a.y - b.y) < WALL_JOIN_EPS;
+
+    function dirOf(w: Wall) {
+      const dx = w.end.x - w.start.x;
+      const dy = w.end.y - w.start.y;
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: dx / len, y: dy / len, len };
+    }
+
+    function intersect(p1: Point, d1: Point, p2: Point, d2: Point): Point | null {
+      const denom = d1.x * d2.y - d1.y * d2.x;
+      if (Math.abs(denom) < 1e-6) return null;
+      const t1 = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denom;
+      return { x: p1.x + t1 * d1.x, y: p1.y + t1 * d1.y };
+    }
+
+    function computeEnd(wall: Wall, atStart: boolean): WallMiterEnd | null {
+      const V = atStart ? wall.start : wall.end;
+      const d = dirOf(wall);
+      const n = { x: -d.y, y: d.x };
+      const r = Math.max(wall.thickness, WALL_THICKNESS) / 2;
+
+      const others = straightWalls.filter(
+        (w) => w.id !== wall.id && (samePoint(w.start, V) || samePoint(w.end, V))
+      );
+      if (others.length !== 1) return null; // only clean 2-wall corners are mitered
+
+      const other = others[0];
+      const od = dirOf(other);
+      const on = { x: -od.y, y: od.x };
+      const orr = Math.max(other.thickness, WALL_THICKNESS) / 2;
+
+      const wPos = { x: V.x + n.x * r, y: V.y + n.y * r };
+      const wNeg = { x: V.x - n.x * r, y: V.y - n.y * r };
+      const oPos = { x: V.x + on.x * orr, y: V.y + on.y * orr };
+      const oNeg = { x: V.x - on.x * orr, y: V.y - on.y * orr };
+
+      const distSq = (a: Point, b: Point) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+      const posMatchesOPos = distSq(wPos, oPos) <= distSq(wPos, oNeg);
+      const oPairForPos = posMatchesOPos ? oPos : oNeg;
+      const oPairForNeg = posMatchesOPos ? oNeg : oPos;
+
+      const cpPos = intersect(wPos, d, oPairForPos, od);
+      const cpNeg = intersect(wNeg, d, oPairForNeg, od);
+      if (!cpPos || !cpNeg) return null;
+
+      const uPos = (cpPos.x - wall.start.x) * d.x + (cpPos.y - wall.start.y) * d.y;
+      const uNeg = (cpNeg.x - wall.start.x) * d.x + (cpNeg.y - wall.start.y) * d.y;
+
+      // Guard against near-parallel walls sending the miter point absurdly far away
+      const rawU = atStart ? 0 : d.len;
+      const maxExt = Math.max(r, orr) * 6;
+      if (Math.abs(uPos - rawU) > maxExt || Math.abs(uNeg - rawU) > maxExt) return null;
+
+      return { uPos, uNeg };
+    }
+
+    for (const wall of straightWalls) {
+      const len = dirOf(wall).len;
+      const start = computeEnd(wall, true) ?? { uPos: 0, uNeg: 0 };
+      const end = computeEnd(wall, false) ?? { uPos: len, uNeg: len };
+      result.set(wall.id, { start, end });
+    }
+
+    return result;
+  }
+
+  /**
+   * Builds a wall-segment prism whose start/end cross-sections can be mitered (cut at an
+   * angle instead of flat/perpendicular), so adjacent wall segments can share an exact
+   * seam at their corner. Reduces to a plain box when u0Pos===u0Neg and u1Pos===u1Neg.
+   * Face/material layout mirrors THREE.BoxGeometry's [+x,-x,+y,-y,+z,-z] convention:
+   * 0/1 = start/end caps, 2/3 = top/bottom, 4/5 = interior/exterior side faces.
+   */
+  function buildWallMiterGeometry(
+    u0Pos: number, u0Neg: number, u1Pos: number, u1Neg: number,
+    r: number, yBottom: number, yTop: number
+  ): THREE.BufferGeometry {
+    const P: [number, number, number][] = [
+      [u0Pos, yBottom, r],  // 0 start-pos-bottom
+      [u0Neg, yBottom, -r], // 1 start-neg-bottom
+      [u1Neg, yBottom, -r], // 2 end-neg-bottom
+      [u1Pos, yBottom, r],  // 3 end-pos-bottom
+      [u0Pos, yTop, r],     // 4 start-pos-top
+      [u0Neg, yTop, -r],    // 5 start-neg-top
+      [u1Neg, yTop, -r],    // 6 end-neg-top
+      [u1Pos, yTop, r],     // 7 end-pos-top
+    ];
+
+    // Each entry: corner indices in CCW order (as seen from outside the solid) + material index
+    const faces: [number[], number][] = [
+      [[0, 4, 5, 1], 0], // start cap
+      [[3, 2, 6, 7], 1], // end cap
+      [[4, 7, 6, 5], 2], // top
+      [[0, 1, 2, 3], 3], // bottom
+      [[0, 3, 7, 4], 4], // interior side (+r)
+      [[1, 5, 6, 2], 5], // exterior side (-r)
+    ];
+
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    let vertCount = 0;
+    const geo = new THREE.BufferGeometry();
+
+    for (const [idx, materialIndex] of faces) {
+      const [a, b, c, d] = idx.map((i) => P[i]);
+      const ax = b[0] - a[0], ay = b[1] - a[1], az = b[2] - a[2];
+      const bx = c[0] - a[0], by = c[1] - a[1], bz = c[2] - a[2];
+      let nx = ay * bz - az * by;
+      let ny = az * bx - ax * bz;
+      let nz = ax * by - ay * bx;
+      const nlen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nlen; ny /= nlen; nz /= nlen;
+
+      const quad = [a, b, c, a, c, d];
+      const quadUv: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]];
+      for (let i = 0; i < 6; i++) {
+        positions.push(quad[i][0], quad[i][1], quad[i][2]);
+        normals.push(nx, ny, nz);
+        uvs.push(quadUv[i][0], quadUv[i][1]);
+      }
+      geo.addGroup(vertCount, 6, materialIndex);
+      vertCount += 6;
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    return geo;
+  }
+
   function buildWalls(floor: Floor) {
     clearGroup(wallGroup);
     wallMeshMap.clear();
@@ -1157,6 +1308,7 @@
     const defaultInteriorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const defaultExteriorMat = new THREE.MeshStandardMaterial({ color: 0xd4cfc9, roughness: 0.85 });
     const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d4, roughness: 0.7 });
+    const wallMiters = computeWallMiters(floor.walls);
 
     for (const wall of floor.walls) {
       // Resolve per-side materials: interior and exterior can have independent color/texture
@@ -1266,24 +1418,38 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
+      const miter = wallMiters.get(wall.id);
+      const r = t / 2;
 
       for (const seg of segments) {
-        const geo = new THREE.BoxGeometry(seg.width, seg.height, t);
-
         // Create a multi-material wall: interior white, exterior brown
         const materials = [
-          exteriorMat, exteriorMat, // left, right
+          exteriorMat, exteriorMat, // start cap, end cap
           interiorMat, interiorMat, // top, bottom
-          interiorMat, exteriorMat, // front (interior), back (exterior)
+          interiorMat, exteriorMat, // interior side, exterior side
         ];
+
+        // Only the segments touching the wall's true start/end get a mitered cut;
+        // segments carved out around door/window openings keep a flat perpendicular cut.
+        const segU0 = seg.offsetX - seg.width / 2;
+        const segU1 = seg.offsetX + seg.width / 2;
+        const miterStart = miter && segU0 <= WALL_JOIN_EPS;
+        const miterEnd = miter && segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = miterStart ? miter!.start.uPos : segU0;
+        const u0Neg = miterStart ? miter!.start.uNeg : segU0;
+        const u1Pos = miterEnd ? miter!.end.uPos : segU1;
+        const u1Neg = miterEnd ? miter!.end.uNeg : segU1;
+        const mid = (segU0 + segU1) / 2;
+
+        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height);
         const mesh = new THREE.Mesh(geo, materials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
 
-        const localX = seg.offsetX - len / 2;
+        const localX = mid - len / 2;
         mesh.position.set(
           cx + localX * Math.cos(angle),
-          seg.height / 2 + seg.offsetY,
+          seg.offsetY,
           cy + localX * Math.sin(angle)
         );
         mesh.rotation.y = -angle;
@@ -1751,6 +1917,7 @@
     
     const defaultInteriorMat = transparentMat(0xffffff);
     const defaultExteriorMat = transparentMat(0xd4cfc9, 0.85);
+    const wallMiters = computeWallMiters(floor.walls);
 
     for (const wall of floor.walls) {
       const dx = wall.end.x - wall.start.x;
@@ -1767,6 +1934,8 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
+      const miter = wallMiters.get(wall.id);
+      const r = t / 2;
 
       const materials = [
         defaultExteriorMat, defaultExteriorMat,
@@ -1775,14 +1944,24 @@
       ];
 
       for (const seg of segments) {
-        const geo = new THREE.BoxGeometry(seg.width, seg.height, t);
+        const segU0 = seg.offsetX - seg.width / 2;
+        const segU1 = seg.offsetX + seg.width / 2;
+        const miterStart = miter && segU0 <= WALL_JOIN_EPS;
+        const miterEnd = miter && segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = miterStart ? miter!.start.uPos : segU0;
+        const u0Neg = miterStart ? miter!.start.uNeg : segU0;
+        const u1Pos = miterEnd ? miter!.end.uPos : segU1;
+        const u1Neg = miterEnd ? miter!.end.uNeg : segU1;
+        const mid = (segU0 + segU1) / 2;
+
+        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height);
         const mesh = new THREE.Mesh(geo, materials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        const localX = seg.offsetX - len / 2;
+        const localX = mid - len / 2;
         mesh.position.set(
           cx + localX * Math.cos(angle),
-          seg.height / 2 + seg.offsetY + yOffset,
+          seg.offsetY + yOffset,
           cy + localX * Math.sin(angle)
         );
         mesh.rotation.y = -angle;
