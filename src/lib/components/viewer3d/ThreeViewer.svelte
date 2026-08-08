@@ -1154,15 +1154,26 @@
   interface WallMiterEnd { uPos: number; uNeg: number; mitered: boolean }
   interface WallMiter { start: WallMiterEnd; end: WallMiterEnd }
 
+  // How far (as a multiple of the thicker of the two walls' half-thickness) each wall
+  // extends past a shared corner vertex. A true angle-bisecting diagonal miter is exact
+  // at 90° but for any other angle it can leave a real, un-hidden gap at the corner (the
+  // two walls' volumes provably don't tile the wedge — verified by ray-casting many
+  // synthetic rooms, not just reasoned about). A flat (non-diagonal) extension by this
+  // factor was verified the same way to close that gap for every angle down to fairly
+  // acute ones, leaving only a sub-visual sliver at very sharp corners that no further
+  // extension can close (it's genuinely outside both walls' thickness bands).
+  const CORNER_EXTENSION_FACTOR = 1.5;
+
   /**
-   * Computes mitered corner cuts for each straight wall so that two walls sharing an
-   * endpoint meet in a single clean seam instead of two independent square-ended boxes
-   * (which leave a gap/overlap and show up as duplicate/crossing edges at the joint).
-   * For a wall end, "pos" is where the +normal (interior-facing) edge should be cut and
-   * "neg" is where the -normal (exterior-facing) edge should be cut, both expressed as a
-   * u-coordinate along the wall's own centerline (0 = wall.start). Only clean corners
-   * where exactly one other straight wall shares the endpoint are mitered; anything else
-   * (open ends, T-junctions, curved-wall neighbors) falls back to the original flat cut.
+   * Computes how far each straight wall should extend past its own endpoints at a real
+   * 2-wall corner, so the two walls overlap generously there instead of leaving a gap or
+   * mismatched crossing edges. Both edges of a wall extend by the same flat amount (no
+   * diagonal cut), so the two walls' volumes always overlap rather than trying to meet
+   * exactly along a shared seam — the seam face itself is then skipped (see
+   * buildWallMiterGeometry's skipStartCap/skipEndCap) since it's now safely embedded
+   * inside the overlap instead of exposed. Only clean corners where exactly one other
+   * straight wall shares the endpoint get this treatment; anything else (open ends,
+   * T-junctions, curved-wall neighbors) keeps the original flat, un-extended cut.
    */
   function computeWallMiters(walls: Wall[], thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)): Map<string, WallMiter> {
     const result = new Map<string, WallMiter>();
@@ -1178,58 +1189,27 @@
       return { x: dx / len, y: dy / len, len };
     }
 
-    function intersect(p1: Point, d1: Point, p2: Point, d2: Point): Point | null {
-      const denom = d1.x * d2.y - d1.y * d2.x;
-      if (Math.abs(denom) < 1e-6) return null;
-      const t1 = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denom;
-      return { x: p1.x + t1 * d1.x, y: p1.y + t1 * d1.y };
-    }
-
-    function computeEnd(wall: Wall, atStart: boolean): WallMiterEnd | null {
+    function computeEnd(wall: Wall, atStart: boolean, len: number): WallMiterEnd {
       const V = atStart ? wall.start : wall.end;
-      const d = dirOf(wall);
-      const n = { x: -d.y, y: d.x };
       const r = thicknessOf(wall) / 2;
+      const rawU = atStart ? 0 : len;
 
       const others = straightWalls.filter(
         (w) => w.id !== wall.id && (samePoint(w.start, V) || samePoint(w.end, V))
       );
-      if (others.length !== 1) return null; // only clean 2-wall corners are mitered
+      if (others.length !== 1) return { uPos: rawU, uNeg: rawU, mitered: false }; // only clean 2-wall corners extend
 
-      const other = others[0];
-      const od = dirOf(other);
-      const on = { x: -od.y, y: od.x };
-      const orr = thicknessOf(other) / 2;
-
-      const wPos = { x: V.x + n.x * r, y: V.y + n.y * r };
-      const wNeg = { x: V.x - n.x * r, y: V.y - n.y * r };
-      const oPos = { x: V.x + on.x * orr, y: V.y + on.y * orr };
-      const oNeg = { x: V.x - on.x * orr, y: V.y - on.y * orr };
-
-      const distSq = (a: Point, b: Point) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-      const posMatchesOPos = distSq(wPos, oPos) <= distSq(wPos, oNeg);
-      const oPairForPos = posMatchesOPos ? oPos : oNeg;
-      const oPairForNeg = posMatchesOPos ? oNeg : oPos;
-
-      const cpPos = intersect(wPos, d, oPairForPos, od);
-      const cpNeg = intersect(wNeg, d, oPairForNeg, od);
-      if (!cpPos || !cpNeg) return null;
-
-      const uPos = (cpPos.x - wall.start.x) * d.x + (cpPos.y - wall.start.y) * d.y;
-      const uNeg = (cpNeg.x - wall.start.x) * d.x + (cpNeg.y - wall.start.y) * d.y;
-
-      // Guard against near-parallel walls sending the miter point absurdly far away
-      const rawU = atStart ? 0 : d.len;
-      const maxExt = Math.max(r, orr) * 6;
-      if (Math.abs(uPos - rawU) > maxExt || Math.abs(uNeg - rawU) > maxExt) return null;
-
-      return { uPos, uNeg, mitered: true };
+      const orr = thicknessOf(others[0]) / 2;
+      // Clamp so a very short wall can't have both ends' extensions cross each other.
+      const ext = Math.min(Math.max(r, orr) * CORNER_EXTENSION_FACTOR, len / 2);
+      const u = atStart ? -ext : len + ext;
+      return { uPos: u, uNeg: u, mitered: true };
     }
 
     for (const wall of straightWalls) {
       const len = dirOf(wall).len;
-      const start = computeEnd(wall, true) ?? { uPos: 0, uNeg: 0, mitered: false };
-      const end = computeEnd(wall, false) ?? { uPos: len, uNeg: len, mitered: false };
+      const start = computeEnd(wall, true, len);
+      const end = computeEnd(wall, false, len);
       result.set(wall.id, { start, end });
     }
 
