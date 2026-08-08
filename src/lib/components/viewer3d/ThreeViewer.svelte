@@ -144,7 +144,7 @@
   /** Capture scene from interior camera as base64 PNG */
   function captureSceneBase64(width: number, height: number): string {
     updateInteriorCamera();
-    const offRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    const offRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     offRenderer.setSize(width, height);
     offRenderer.shadowMap.enabled = true;
     offRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -454,7 +454,7 @@
     // Create high-res offscreen renderer
     const width = 1920;
     const height = 1080;
-    const offRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: false });
+    const offRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: false, logarithmicDepthBuffer: true });
     offRenderer.setSize(width, height);
     offRenderer.setPixelRatio(1);
     offRenderer.shadowMap.enabled = true;
@@ -490,7 +490,7 @@
     if (!interiorCamera) return;
 
     if (!cameraPreviewRenderer) {
-      cameraPreviewRenderer = new THREE.WebGLRenderer({ canvas: cameraPreviewCanvas, antialias: true, alpha: false });
+      cameraPreviewRenderer = new THREE.WebGLRenderer({ canvas: cameraPreviewCanvas, antialias: true, alpha: false, logarithmicDepthBuffer: true });
       cameraPreviewRenderer.shadowMap.enabled = true;
       cameraPreviewRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
       cameraPreviewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -688,14 +688,14 @@
     groundMat.polygonOffsetUnits = 2;
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -1;
+    ground.position.y = -10;
     ground.receiveShadow = true;
     scene.add(ground);
 
     camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 20000);
     camera.position.set(800, 600, 800);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
@@ -897,7 +897,7 @@
     const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, side: THREE.DoubleSide, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     const floorMesh = new THREE.Mesh(floorGeo, floorMat);
     floorMesh.rotation.x = -Math.PI / 2;
-    floorMesh.position.y = 0.5;
+    floorMesh.position.y = 0;
     floorMesh.receiveShadow = true;
     scene.add(floorMesh);
 
@@ -1616,11 +1616,11 @@
           opacity: 0.5 
         });
       }
-      
+
       const mesh = new THREE.Mesh(geo, material);
-      // Rotate to lie on XZ plane, slightly above base floor
+      // Rotate to lie on XZ plane, well above the base floor to avoid z-fighting
       mesh.rotation.x = -Math.PI / 2;
-      mesh.position.y = 1;
+      mesh.position.y = 5;
       mesh.receiveShadow = true;
       wallGroup.add(mesh);
 
