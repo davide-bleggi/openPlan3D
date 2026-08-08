@@ -1158,11 +1158,15 @@
   // extends past a shared corner vertex. A true angle-bisecting diagonal miter is exact
   // at 90° but for any other angle it can leave a real, un-hidden gap at the corner (the
   // two walls' volumes provably don't tile the wedge — verified by ray-casting many
-  // synthetic rooms, not just reasoned about). A flat (non-diagonal) extension by this
-  // factor was verified the same way to close that gap for every angle down to fairly
-  // acute ones, leaving only a sub-visual sliver at very sharp corners that no further
-  // extension can close (it's genuinely outside both walls' thickness bands).
-  const CORNER_EXTENSION_FACTOR = 1.5;
+  // synthetic rooms, not just reasoned about). A flat (non-diagonal) extension fixes that,
+  // but only up to exactly 1.0x the neighbor's half-thickness — beyond that, the extended
+  // sliver pokes out past the neighbor's own thickness band and becomes a visible
+  // protruding tab at the corner (also verified by ray-casting: checking the room's
+  // bounding box against its expected footprint). 1.0x is the largest factor with zero
+  // protrusion; it fully closes the gap for ordinary near-90° corners (the overwhelming
+  // majority of real floor plans) and leaves only a small, angle-dependent residual on
+  // quite acute/obtuse shapes rather than a visible bump on every corner.
+  const CORNER_EXTENSION_FACTOR = 1.0;
 
   /**
    * Computes how far each straight wall should extend past its own endpoints at a real
