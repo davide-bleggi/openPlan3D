@@ -276,27 +276,18 @@ function createLShaped(): Project {
   // Bedroom 3: top-right 600x350
   const bed3Bottom = wall(800, 350, 1400, 350);
 
-  // Bathroom 1: between bed1 and living, 200x250 at left
+  // Bathroom 1: x=0..200, y=350..600. Enclosed by bed1Bottom (top), w6 (left),
+  // garageTop (bottom) and this divider, which doubles as the hallway wall.
   const bath1Right = wall(200, 350, 200, 600);
-  const bath1Top = wall(0, 350, 200, 350); // overlaps with bed1Bottom start... let's adjust
-  // Actually bed1Bottom goes 0->400, bath1 is below it. Let's place bath at bottom-left of main
-  // Simplify: bath1 at x=0,y=350 to x=200,y=600
-  const bath1Bottom2 = wall(0, 600, 200, 600);
 
-  // Bathroom 2: at x=800,y=350 to x=1000,y=600 
-  const bath2Left = wall(800, 350, 800, 600);
-  const bath2Top2 = wall(800, 350, 1000, 350); // overlap with bed3Bottom
+  // Bathroom 2: x=800..1000, y=350..600 — bed3Bottom closes the top.
   const bath2Right2 = wall(1000, 350, 1000, 600);
-
-  // Hallway / living divider
-  const hallWall = wall(200, 350, 200, 600);
 
   const walls = [w1, w2, w3, w4, w5, w6,
     garageRight, garageTop,
     bed1Right, bed1Bottom, bed2Right, bed2Bottom, bed3Bottom,
-    bath1Right, bath1Bottom2,
-    bath2Right2,
-    hallWall];
+    bath1Right,
+    bath2Right2];
 
   const doors: Door[] = [
     door(w3.id, 0.8),                              // front door

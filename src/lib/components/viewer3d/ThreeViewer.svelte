@@ -1151,171 +1151,148 @@
     }
   }
 
-  interface WallMiterEnd { uPos: number; uNeg: number; mitered: boolean }
-  interface WallMiter { start: WallMiterEnd; end: WallMiterEnd }
+  // uPos / uNeg are the cut positions along the wall axis on its +normal and -normal side.
+  // capped=false means the neighbour's volume closes this end exactly, so the cap face
+  // would be an internal boundary and is dropped.
+  interface WallJoinEnd { uPos: number; uNeg: number; capped: boolean }
+  interface WallJoin { start: WallJoinEnd; end: WallJoinEnd }
 
-  // Largest flat-extension multiple of half-thickness that stays within the neighbor's own band.
-  const CORNER_EXTENSION_FACTOR = 1.0;
+  // A true miter spikes to infinity as the angle closes; past this multiple of the
+  // half-thickness we clamp the tip and keep the cap, trading a small notch for a hole.
+  const MITER_LIMIT = 4;
 
-  // Mitered corner cut per wall, using each loop's winding direction to resolve interior/exterior.
-  // Non-loop walls (T-junctions, open ends) get a flat extension instead.
-  function computeWallMiters(walls: Wall[], thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)): Map<string, WallMiter> {
-    const result = new Map<string, WallMiter>();
-    const straightWalls = walls.filter((w) => !w.curvePoint);
-
+  // Corner join per wall end. Purely local: group wall ends by shared vertex, sort them
+  // by outgoing angle, and miter each end against its immediate angular neighbour on each
+  // side. Degree 2 reduces to the usual corner miter; degree 3+ (T- and X-junctions) falls
+  // out of the same rule, with the caps left in place to close the small central void.
+  function computeWallJoins(walls: Wall[], thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)): Map<string, WallJoin> {
     const samePoint = (a: Point, b: Point) =>
       Math.abs(a.x - b.x) < WALL_JOIN_EPS && Math.abs(a.y - b.y) < WALL_JOIN_EPS;
 
-    function dirOf(w: Wall) {
-      const dx = w.end.x - w.start.x;
-      const dy = w.end.y - w.start.y;
-      const len = Math.hypot(dx, dy) || 1;
-      return { x: dx / len, y: dy / len, len };
+    // One record per wall endpoint. dOut points away from the shared vertex, along the
+    // wall, so the angular order around the vertex is just atan2(dOut).
+    interface End {
+      wall: Wall;
+      atStart: boolean;
+      v: Point;
+      d: Point;      // wall direction, start -> end
+      dOut: Point;   // direction away from v
+      r: number;
+      len: number;
+      angle: number;
     }
 
-    function intersect(p1: Point, d1: Point, p2: Point, d2: Point): Point | null {
-      const denom = d1.x * d2.y - d1.y * d2.x;
-      if (Math.abs(denom) < 1e-6) return null;
-      const t1 = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denom;
-      return { x: p1.x + t1 * d1.x, y: p1.y + t1 * d1.y };
-    }
-
-    // Pass 1: detect closed loops (rooms)
-    interface LoopMember { wall: Wall; reversed: boolean }
-    const loops: LoopMember[][] = [];
-    const inLoop = new Set<string>();
-
-    for (const startWall of straightWalls) {
-      if (inLoop.has(startWall.id)) continue;
-      const localUsed = new Set<string>([startWall.id]);
-      const members: LoopMember[] = [{ wall: startWall, reversed: false }];
-      let curEndsAt = startWall.end;
-      let closed = false;
-      while (members.length <= straightWalls.length) {
-        const candidates = straightWalls.filter(
-          (w) => !localUsed.has(w.id) && (samePoint(w.start, curEndsAt) || samePoint(w.end, curEndsAt))
-        );
-        if (candidates.length !== 1) break; // dead end or T-junction
-        const next = candidates[0];
-        const reversed = !samePoint(next.start, curEndsAt);
-        members.push({ wall: next, reversed });
-        localUsed.add(next.id);
-        curEndsAt = reversed ? next.start : next.end;
-        if (samePoint(curEndsAt, startWall.start)) { closed = true; break; }
-      }
-      if (closed && members.length >= 3) {
-        loops.push(members);
-        for (const m of members) inLoop.add(m.wall.id);
+    const ends: End[] = [];
+    for (const wall of walls) {
+      if (wall.curvePoint) continue;
+      const dx = wall.end.x - wall.start.x;
+      const dy = wall.end.y - wall.start.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      const d = { x: dx / len, y: dy / len };
+      const r = thicknessOf(wall) / 2;
+      for (const atStart of [true, false]) {
+        const dOut = atStart ? d : { x: -d.x, y: -d.y };
+        ends.push({
+          wall, atStart, v: atStart ? wall.start : wall.end, d, dOut, r, len,
+          angle: Math.atan2(dOut.y, dOut.x),
+        });
       }
     }
 
-    const travStart = (m: LoopMember) => (m.reversed ? m.wall.end : m.wall.start);
-    const travEnd = (m: LoopMember) => (m.reversed ? m.wall.start : m.wall.end);
-    const travDir = (m: LoopMember) => {
-      const d = dirOf(m.wall);
-      return m.reversed ? { x: -d.x, y: -d.y, len: d.len } : d;
+    // Group endpoints that land on the same vertex (same tolerance as roomDetection).
+    const vertices: End[][] = [];
+    for (const e of ends) {
+      const group = vertices.find((g) => samePoint(g[0].v, e.v));
+      if (group) group.push(e); else vertices.push([e]);
+    }
+
+    // Where the two offset lines meet. `sideA`/`sideB` pick which side of each wall
+    // (+1 = left of dOut) the offset line sits on.
+    function cutPoint(a: End, sideA: number, b: End, sideB: number): { p: Point; exact: boolean } {
+      const nA = { x: -a.dOut.y * sideA, y: a.dOut.x * sideA };
+      const nB = { x: -b.dOut.y * sideB, y: b.dOut.x * sideB };
+      const pA = { x: a.v.x + nA.x * a.r, y: a.v.y + nA.y * a.r };
+      const pB = { x: b.v.x + nB.x * b.r, y: b.v.y + nB.y * b.r };
+      const denom = a.dOut.x * b.dOut.y - a.dOut.y * b.dOut.x;
+
+      if (Math.abs(denom) < 1e-6) {
+        // Parallel offset lines. Anti-parallel means the two walls run straight through
+        // each other, and equal radii make the faces continuous — a flat cut at the
+        // vertex is then exact. Same-direction (overlapping walls) never is.
+        const straightThrough = a.dOut.x * b.dOut.x + a.dOut.y * b.dOut.y < -0.999;
+        return { p: pA, exact: straightThrough && Math.abs(a.r - b.r) < 1e-6 };
+      }
+
+      const t = ((pB.x - pA.x) * b.dOut.y - (pB.y - pA.y) * b.dOut.x) / denom;
+      const p = { x: pA.x + t * a.dOut.x, y: pA.y + t * a.dOut.y };
+      const reach = Math.hypot(p.x - a.v.x, p.y - a.v.y);
+      const limit = Math.max(a.r, b.r) * MITER_LIMIT;
+      if (reach > limit) {
+        // Too acute for a spike: pull the tip back to the limit and keep the cap.
+        const k = limit / reach;
+        return { p: { x: a.v.x + (p.x - a.v.x) * k, y: a.v.y + (p.y - a.v.y) * k }, exact: false };
+      }
+      return { p, exact: true };
+    }
+
+    const result = new Map<string, WallJoin>();
+    const setEnd = (e: End, entry: WallJoinEnd) => {
+      const existing = result.get(e.wall.id) ?? {
+        start: { uPos: 0, uNeg: 0, capped: true },
+        end: { uPos: e.len, uNeg: e.len, capped: true },
+      };
+      if (e.atStart) existing.start = entry; else existing.end = entry;
+      result.set(e.wall.id, existing);
     };
 
-    function setEnd(wallId: string, atStart: boolean, len: number, entry: WallMiterEnd) {
-      const existing = result.get(wallId) ?? {
-        start: { uPos: 0, uNeg: 0, mitered: false },
-        end: { uPos: len, uNeg: len, mitered: false },
-      };
-      if (atStart) existing.start = entry; else existing.end = entry;
-      result.set(wallId, existing);
-    }
+    for (const group of vertices) {
+      const n = group.length;
 
-    for (const members of loops) {
-      const n = members.length;
-      let signedArea = 0;
-      for (const m of members) {
-        const a = travStart(m), b = travEnd(m);
-        signedArea += a.x * b.y - b.x * a.y;
+      // A free end stays square.
+      if (n < 2) {
+        const e = group[0];
+        const u = e.atStart ? 0 : e.len;
+        setEnd(e, { uPos: u, uNeg: u, capped: true });
+        continue;
       }
-      const windingSign = signedArea >= 0 ? 1 : -1;
+
+      group.sort((a, b) => a.angle - b.angle);
 
       for (let i = 0; i < n; i++) {
-        const prev = members[i];
-        const next = members[(i + 1) % n];
-        const V = travEnd(prev); // === travStart(next)
+        const e = group[i];
+        // Going counter-clockwise, the wedge between e and its next neighbour is bounded
+        // by e's left face and that neighbour's right face; mirrored on the other side.
+        const ccw = group[(i + 1) % n];
+        const cw = group[(i - 1 + n) % n];
+        const cutL = cutPoint(e, +1, ccw, -1);
+        const cutR = cutPoint(e, -1, cw, +1);
 
-        // A third wall touching V (shared wall, T-junction) disqualifies mitering here.
-        const touchingCount = straightWalls.filter((w) => samePoint(w.start, V) || samePoint(w.end, V)).length;
+        const uOf = (p: Point) => (p.x - e.wall.start.x) * e.d.x + (p.y - e.wall.start.y) * e.d.y;
+        // Local +z of the wall mesh is the left normal of start->end, so at the start end
+        // "left of dOut" is the +normal side and at the far end it is the -normal side.
+        let uPos = e.atStart ? uOf(cutL.p) : uOf(cutR.p);
+        let uNeg = e.atStart ? uOf(cutR.p) : uOf(cutL.p);
 
-        const prevLen = dirOf(prev.wall).len;
-        const nextLen = dirOf(next.wall).len;
-        const prevAtStart = prev.reversed;
-        const nextAtStart = !next.reversed;
+        // Never let a cut cross the wall's midpoint — a short wall between two thick ones
+        // would otherwise invert.
+        const clampU = (u: number) => (e.atStart ? Math.min(u, e.len / 2) : Math.max(u, e.len / 2));
+        const clamped = { uPos: clampU(uPos), uNeg: clampU(uNeg) };
+        const wasClamped = clamped.uPos !== uPos || clamped.uNeg !== uNeg;
+        uPos = clamped.uPos;
+        uNeg = clamped.uNeg;
 
-        if (touchingCount !== 2) {
-          setEnd(prev.wall.id, prevAtStart, prevLen, { uPos: prevAtStart ? 0 : prevLen, uNeg: prevAtStart ? 0 : prevLen, mitered: false });
-          setEnd(next.wall.id, nextAtStart, nextLen, { uPos: nextAtStart ? 0 : nextLen, uNeg: nextAtStart ? 0 : nextLen, mitered: false });
-          continue;
+        // The cap can only go when the join is exact on both sides and the neighbour is
+        // tall enough to close the whole opening. At degree 3+ the caps bound the small
+        // void left in the middle of the junction, so they always stay.
+        let capped = true;
+        if (n === 2 && cutL.exact && cutR.exact && !wasClamped) {
+          const other = group[(i + 1) % 2];
+          capped = e.wall.height > other.wall.height;
         }
 
-        const dPrev = travDir(prev);
-        const dNext = travDir(next);
-        const rPrev = thicknessOf(prev.wall) / 2;
-        const rNext = thicknessOf(next.wall) / 2;
-
-        function offsetCorner(sign: number): Point | null {
-          const nPrev = { x: -dPrev.y * sign, y: dPrev.x * sign };
-          const nNext = { x: -dNext.y * sign, y: dNext.x * sign };
-          const pPrev = { x: V.x + nPrev.x * rPrev, y: V.y + nPrev.y * rPrev };
-          const pNext = { x: V.x + nNext.x * rNext, y: V.y + nNext.y * rNext };
-          const pt = intersect(pPrev, dPrev, pNext, dNext);
-          if (!pt) return null;
-          const dist = Math.hypot(pt.x - V.x, pt.y - V.y);
-          if (dist > Math.max(rPrev, rNext) * 6) return null; // too sharp: bevel fallback
-          return pt;
-        }
-
-        const interiorPt = offsetCorner(windingSign);
-        const exteriorPt = offsetCorner(-windingSign);
-
-        // Map interior/exterior points onto this wall's own start->end normal.
-        function assign(wall: Wall, atStart: boolean) {
-          const len = dirOf(wall).len;
-          const rawU = atStart ? 0 : len;
-          if (!interiorPt || !exteriorPt) {
-            setEnd(wall.id, atStart, len, { uPos: rawU, uNeg: rawU, mitered: false });
-            return;
-          }
-          const d = dirOf(wall);
-          const nOwn = { x: -d.y, y: d.x };
-          const ownPosPt = { x: V.x + nOwn.x * (thicknessOf(wall) / 2), y: V.y + nOwn.y * (thicknessOf(wall) / 2) };
-          const distSq = (a: Point, b: Point) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
-          const posIsInterior = distSq(ownPosPt, interiorPt) <= distSq(ownPosPt, exteriorPt);
-          const posPt = posIsInterior ? interiorPt : exteriorPt;
-          const negPt = posIsInterior ? exteriorPt : interiorPt;
-          const uPos = (posPt.x - wall.start.x) * d.x + (posPt.y - wall.start.y) * d.y;
-          const uNeg = (negPt.x - wall.start.x) * d.x + (negPt.y - wall.start.y) * d.y;
-          setEnd(wall.id, atStart, len, { uPos, uNeg, mitered: true });
-        }
-
-        assign(prev.wall, prevAtStart);
-        assign(next.wall, nextAtStart);
+        setEnd(e, { uPos, uNeg, capped });
       }
-    }
-
-    // Pass 2: flat extension for anything not resolved by a loop
-    for (const wall of straightWalls) {
-      const len = dirOf(wall).len;
-      const existing = result.get(wall.id);
-      if (existing) continue;
-
-      function fallbackEnd(atStart: boolean): WallMiterEnd {
-        const V = atStart ? wall.start : wall.end;
-        const rawU = atStart ? 0 : len;
-        const r = thicknessOf(wall) / 2;
-        const others = straightWalls.filter((w) => w.id !== wall.id && (samePoint(w.start, V) || samePoint(w.end, V)));
-        if (others.length !== 1) return { uPos: rawU, uNeg: rawU, mitered: false };
-        const orr = thicknessOf(others[0]) / 2;
-        const ext = Math.min(Math.max(r, orr) * CORNER_EXTENSION_FACTOR, len / 2);
-        const u = atStart ? -ext : len + ext;
-        return { uPos: u, uNeg: u, mitered: true };
-      }
-      result.set(wall.id, { start: fallbackEnd(true), end: fallbackEnd(false) });
     }
 
     return result;
@@ -1392,11 +1369,10 @@
     const defaultInteriorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const defaultExteriorMat = new THREE.MeshStandardMaterial({ color: 0xd4cfc9, roughness: 0.85 });
     const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d4, roughness: 0.7 });
-    const wallMiters = computeWallMiters(floor.walls);
-    // The baseboard is 2 units thicker than its wall (t+2), so it needs its own miter
-    // corners computed at that larger radius — reusing the wall-body corner points here
-    // (computed for the thinner wall radius) leaves a real gap at the outer corner tip.
-    const baseboardMiters = computeWallMiters(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
+    const wallJoins = computeWallJoins(floor.walls);
+    // The baseboard is 2 units thicker than its wall (t+2), so its corner points sit
+    // further out; reusing the wall-body ones would leave a gap at the outer corner tip.
+    const baseboardJoins = computeWallJoins(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
 
     for (const wall of floor.walls) {
       // Resolve per-side materials: interior and exterior can have independent color/texture
@@ -1506,8 +1482,8 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
-      // Always present: computeWallMiters returns an entry for every straight wall.
-      const miter = wallMiters.get(wall.id)!;
+      // Always present: computeWallJoins returns an entry for every straight wall.
+      const join = wallJoins.get(wall.id)!;
       const r = t / 2;
 
       for (const seg of segments) {
@@ -1524,16 +1500,13 @@
         const segU1 = seg.offsetX + seg.width / 2;
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? miter.start.uPos : segU0;
-        const u0Neg = touchesStart ? miter.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? miter.end.uPos : segU1;
-        const u1Neg = touchesEnd ? miter.end.uNeg : segU1;
+        const u0Pos = touchesStart ? join.start.uPos : segU0;
+        const u0Neg = touchesStart ? join.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? join.end.uPos : segU1;
+        const u1Neg = touchesEnd ? join.end.uNeg : segU1;
         const mid = (segU0 + segU1) / 2;
-        // A true corner join has no visible cap (the two walls' volumes meet exactly with
-        // no gap, so the cap face would sit on an internal boundary); keep the cap only for
-        // genuine open/dangling ends.
-        const skipStartCap = touchesStart && miter.start.mitered;
-        const skipEndCap = touchesEnd && miter.end.mitered;
+        const skipStartCap = touchesStart && !join.start.capped;
+        const skipEndCap = touchesEnd && !join.end.capped;
 
         const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height, skipStartCap, skipEndCap);
         const mesh = new THREE.Mesh(geo, materials);
@@ -1552,23 +1525,21 @@
         wallGroup.add(mesh);
       }
 
-      // Baseboard — with gaps at door openings; mirrors the wall body's mitered corners,
-      // using its own miter map (baseboardMiters) computed at the baseboard's own radius
-      // — reusing the wall body's corner points here (computed for a thinner radius)
-      // undershoots the baseboard's actual outer edge and leaves a real gap at the corner.
+      // Baseboard — with gaps at door openings; mirrors the wall body's mitered corners
+      // from its own join map, computed at the baseboard's larger radius.
       const doorOpeningsForBB = floor.doors.filter((d) => d.wallId === wall.id);
-      const bbMiter = baseboardMiters.get(wall.id)!;
+      const bbJoin = baseboardJoins.get(wall.id)!;
       const bbR = (t + 2) / 2;
       const addBaseboardSegment = (segU0: number, segU1: number) => {
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? bbMiter.start.uPos : segU0;
-        const u0Neg = touchesStart ? bbMiter.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? bbMiter.end.uPos : segU1;
-        const u1Neg = touchesEnd ? bbMiter.end.uNeg : segU1;
+        const u0Pos = touchesStart ? bbJoin.start.uPos : segU0;
+        const u0Neg = touchesStart ? bbJoin.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? bbJoin.end.uPos : segU1;
+        const u1Neg = touchesEnd ? bbJoin.end.uNeg : segU1;
         const mid = (segU0 + segU1) / 2;
-        const skipStartCap = touchesStart && bbMiter.start.mitered;
-        const skipEndCap = touchesEnd && bbMiter.end.mitered;
+        const skipStartCap = touchesStart && !bbJoin.start.capped;
+        const skipEndCap = touchesEnd && !bbJoin.end.capped;
 
         const bbGeo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, bbR, 0, BASEBOARD_HEIGHT, skipStartCap, skipEndCap);
         const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
@@ -2005,7 +1976,7 @@
     
     const defaultInteriorMat = transparentMat(0xffffff);
     const defaultExteriorMat = transparentMat(0xd4cfc9, 0.85);
-    const wallMiters = computeWallMiters(floor.walls);
+    const wallJoins = computeWallJoins(floor.walls);
 
     for (const wall of floor.walls) {
       const dx = wall.end.x - wall.start.x;
@@ -2022,8 +1993,8 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
-      // Always present: computeWallMiters returns an entry for every straight wall.
-      const miter = wallMiters.get(wall.id)!;
+      // Always present: computeWallJoins returns an entry for every straight wall.
+      const join = wallJoins.get(wall.id)!;
       const r = t / 2;
 
       const materials = [
@@ -2037,13 +2008,13 @@
         const segU1 = seg.offsetX + seg.width / 2;
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? miter.start.uPos : segU0;
-        const u0Neg = touchesStart ? miter.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? miter.end.uPos : segU1;
-        const u1Neg = touchesEnd ? miter.end.uNeg : segU1;
+        const u0Pos = touchesStart ? join.start.uPos : segU0;
+        const u0Neg = touchesStart ? join.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? join.end.uPos : segU1;
+        const u1Neg = touchesEnd ? join.end.uNeg : segU1;
         const mid = (segU0 + segU1) / 2;
-        const skipStartCap = touchesStart && miter.start.mitered;
-        const skipEndCap = touchesEnd && miter.end.mitered;
+        const skipStartCap = touchesStart && !join.start.capped;
+        const skipEndCap = touchesEnd && !join.end.capped;
 
         const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height, skipStartCap, skipEndCap);
         const mesh = new THREE.Mesh(geo, materials);
