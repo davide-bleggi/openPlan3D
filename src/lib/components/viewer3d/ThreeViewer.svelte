@@ -1151,7 +1151,7 @@
     }
   }
 
-  interface WallMiterEnd { uPos: number; uNeg: number }
+  interface WallMiterEnd { uPos: number; uNeg: number; mitered: boolean }
   interface WallMiter { start: WallMiterEnd; end: WallMiterEnd }
 
   /**
@@ -1223,13 +1223,13 @@
       const maxExt = Math.max(r, orr) * 6;
       if (Math.abs(uPos - rawU) > maxExt || Math.abs(uNeg - rawU) > maxExt) return null;
 
-      return { uPos, uNeg };
+      return { uPos, uNeg, mitered: true };
     }
 
     for (const wall of straightWalls) {
       const len = dirOf(wall).len;
-      const start = computeEnd(wall, true) ?? { uPos: 0, uNeg: 0 };
-      const end = computeEnd(wall, false) ?? { uPos: len, uNeg: len };
+      const start = computeEnd(wall, true) ?? { uPos: 0, uNeg: 0, mitered: false };
+      const end = computeEnd(wall, false) ?? { uPos: len, uNeg: len, mitered: false };
       result.set(wall.id, { start, end });
     }
 
@@ -1242,10 +1242,17 @@
    * seam at their corner. Reduces to a plain box when u0Pos===u0Neg and u1Pos===u1Neg.
    * Face/material layout mirrors THREE.BoxGeometry's [+x,-x,+y,-y,+z,-z] convention:
    * 0/1 = start/end caps, 2/3 = top/bottom, 4/5 = interior/exterior side faces.
+   *
+   * When an end is a real miter join to another wall, the two walls' volumes meet exactly
+   * at that cut plane with no gap — so that cap face sits on an internal boundary between
+   * two solids, not a real surface. Rendering it anyway shows up as a spurious colored fin
+   * at the corner, so skipStartCap/skipEndCap omit it entirely for mitered ends; only true
+   * open/dangling wall ends keep their cap.
    */
   function buildWallMiterGeometry(
     u0Pos: number, u0Neg: number, u1Pos: number, u1Neg: number,
-    r: number, yBottom: number, yTop: number
+    r: number, yBottom: number, yTop: number,
+    skipStartCap: boolean = false, skipEndCap: boolean = false
   ): THREE.BufferGeometry {
     const P: [number, number, number][] = [
       [u0Pos, yBottom, r],  // 0 start-pos-bottom
@@ -1259,7 +1266,7 @@
     ];
 
     // Each entry: corner indices in CCW order (as seen from outside the solid) + material index
-    const faces: [number[], number][] = [
+    const allFaces: [number[], number][] = [
       [[0, 4, 5, 1], 0], // start cap
       [[3, 2, 6, 7], 1], // end cap
       [[4, 7, 6, 5], 2], // top
@@ -1267,6 +1274,9 @@
       [[0, 3, 7, 4], 4], // interior side (+r)
       [[1, 5, 6, 2], 5], // exterior side (-r)
     ];
+    const faces = allFaces.filter(([, materialIndex]) =>
+      !(skipStartCap && materialIndex === 0) && !(skipEndCap && materialIndex === 1)
+    );
 
     const positions: number[] = [];
     const normals: number[] = [];
@@ -1418,7 +1428,8 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
-      const miter = wallMiters.get(wall.id);
+      // Always present: computeWallMiters returns an entry for every straight wall.
+      const miter = wallMiters.get(wall.id)!;
       const r = t / 2;
 
       for (const seg of segments) {
@@ -1433,15 +1444,20 @@
         // segments carved out around door/window openings keep a flat perpendicular cut.
         const segU0 = seg.offsetX - seg.width / 2;
         const segU1 = seg.offsetX + seg.width / 2;
-        const miterStart = miter && segU0 <= WALL_JOIN_EPS;
-        const miterEnd = miter && segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = miterStart ? miter!.start.uPos : segU0;
-        const u0Neg = miterStart ? miter!.start.uNeg : segU0;
-        const u1Pos = miterEnd ? miter!.end.uPos : segU1;
-        const u1Neg = miterEnd ? miter!.end.uNeg : segU1;
+        const touchesStart = segU0 <= WALL_JOIN_EPS;
+        const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = touchesStart ? miter.start.uPos : segU0;
+        const u0Neg = touchesStart ? miter.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? miter.end.uPos : segU1;
+        const u1Neg = touchesEnd ? miter.end.uNeg : segU1;
         const mid = (segU0 + segU1) / 2;
+        // A true corner join has no visible cap (the two walls' volumes meet exactly with
+        // no gap, so the cap face would sit on an internal boundary); keep the cap only for
+        // genuine open/dangling ends.
+        const skipStartCap = touchesStart && miter.start.mitered;
+        const skipEndCap = touchesEnd && miter.end.mitered;
 
-        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height);
+        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height, skipStartCap, skipEndCap);
         const mesh = new THREE.Mesh(geo, materials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
@@ -1458,15 +1474,33 @@
         wallGroup.add(mesh);
       }
 
-      // Baseboard — with gaps at door openings
+      // Baseboard — with gaps at door openings; mirrors the wall body's mitered corners
+      // (using the baseboard's own slightly larger radius) so it doesn't leave the same
+      // gap/overlap crack the wall body used to show.
       const doorOpeningsForBB = floor.doors.filter((d) => d.wallId === wall.id);
-      if (doorOpeningsForBB.length === 0) {
-        const bbGeo = new THREE.BoxGeometry(len, BASEBOARD_HEIGHT, t + 2);
+      const bbR = (t + 2) / 2;
+      const addBaseboardSegment = (segU0: number, segU1: number) => {
+        const touchesStart = segU0 <= WALL_JOIN_EPS;
+        const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = touchesStart ? miter.start.uPos : segU0;
+        const u0Neg = touchesStart ? miter.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? miter.end.uPos : segU1;
+        const u1Neg = touchesEnd ? miter.end.uNeg : segU1;
+        const mid = (segU0 + segU1) / 2;
+        const skipStartCap = touchesStart && miter.start.mitered;
+        const skipEndCap = touchesEnd && miter.end.mitered;
+
+        const bbGeo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, bbR, 0, BASEBOARD_HEIGHT, skipStartCap, skipEndCap);
         const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
-        bbMesh.position.set(cx, BASEBOARD_HEIGHT / 2, cy);
+        const localX = mid - len / 2;
+        bbMesh.position.set(cx + localX * Math.cos(angle), 0, cy + localX * Math.sin(angle));
         bbMesh.rotation.y = -angle;
         bbMesh.castShadow = true;
         wallGroup.add(bbMesh);
+      };
+
+      if (doorOpeningsForBB.length === 0) {
+        addBaseboardSegment(0, len);
       } else {
         // Build baseboard segments skipping door gaps
         const sortedDoors = [...doorOpeningsForBB].sort((a, b) => a.position - b.position);
@@ -1474,36 +1508,10 @@
         for (const door of sortedDoors) {
           const dLeft = door.position * len - door.width / 2;
           const dRight = door.position * len + door.width / 2;
-          if (dLeft > bbCursor) {
-            const segLen = dLeft - bbCursor;
-            const segCenter = bbCursor + segLen / 2 - len / 2;
-            const bbGeo = new THREE.BoxGeometry(segLen, BASEBOARD_HEIGHT, t + 2);
-            const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
-            bbMesh.position.set(
-              cx + segCenter * Math.cos(angle),
-              BASEBOARD_HEIGHT / 2,
-              cy + segCenter * Math.sin(angle)
-            );
-            bbMesh.rotation.y = -angle;
-            bbMesh.castShadow = true;
-            wallGroup.add(bbMesh);
-          }
+          if (dLeft > bbCursor) addBaseboardSegment(bbCursor, dLeft);
           bbCursor = Math.max(bbCursor, dRight);
         }
-        if (bbCursor < len) {
-          const segLen = len - bbCursor;
-          const segCenter = bbCursor + segLen / 2 - len / 2;
-          const bbGeo = new THREE.BoxGeometry(segLen, BASEBOARD_HEIGHT, t + 2);
-          const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
-          bbMesh.position.set(
-            cx + segCenter * Math.cos(angle),
-            BASEBOARD_HEIGHT / 2,
-            cy + segCenter * Math.sin(angle)
-          );
-          bbMesh.rotation.y = -angle;
-          bbMesh.castShadow = true;
-          wallGroup.add(bbMesh);
-        }
+        if (bbCursor < len) addBaseboardSegment(bbCursor, len);
       }
     }
 
@@ -1934,7 +1942,8 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
-      const miter = wallMiters.get(wall.id);
+      // Always present: computeWallMiters returns an entry for every straight wall.
+      const miter = wallMiters.get(wall.id)!;
       const r = t / 2;
 
       const materials = [
@@ -1946,15 +1955,17 @@
       for (const seg of segments) {
         const segU0 = seg.offsetX - seg.width / 2;
         const segU1 = seg.offsetX + seg.width / 2;
-        const miterStart = miter && segU0 <= WALL_JOIN_EPS;
-        const miterEnd = miter && segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = miterStart ? miter!.start.uPos : segU0;
-        const u0Neg = miterStart ? miter!.start.uNeg : segU0;
-        const u1Pos = miterEnd ? miter!.end.uPos : segU1;
-        const u1Neg = miterEnd ? miter!.end.uNeg : segU1;
+        const touchesStart = segU0 <= WALL_JOIN_EPS;
+        const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = touchesStart ? miter.start.uPos : segU0;
+        const u0Neg = touchesStart ? miter.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? miter.end.uPos : segU1;
+        const u1Neg = touchesEnd ? miter.end.uNeg : segU1;
         const mid = (segU0 + segU1) / 2;
+        const skipStartCap = touchesStart && miter.start.mitered;
+        const skipEndCap = touchesEnd && miter.end.mitered;
 
-        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height);
+        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height, skipStartCap, skipEndCap);
         const mesh = new THREE.Mesh(geo, materials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
