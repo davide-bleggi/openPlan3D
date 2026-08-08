@@ -1616,12 +1616,6 @@
           opacity: 0.5 
         });
       }
-      
-      // Push the room floor towards the camera in the depth buffer so it
-      // never z-fights with the base floor/ground planes it sits directly above.
-      material.polygonOffset = true;
-      material.polygonOffsetFactor = -4;
-      material.polygonOffsetUnits = -4;
 
       const mesh = new THREE.Mesh(geo, material);
       // Rotate to lie on XZ plane, well above the base floor to avoid z-fighting
