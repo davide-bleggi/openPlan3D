@@ -1157,6 +1157,10 @@
   interface WallJoinEnd { uPos: number; uNeg: number; capped: boolean }
   interface WallJoin { start: WallJoinEnd; end: WallJoinEnd }
 
+  // Where three or more walls meet, the mitered ends leave a small polygon in the middle
+  // that no wall covers. The cap faces close it on the sides; it still needs a lid.
+  interface JunctionVoid { center: Point; poly: Point[]; minHeight: number }
+
   // A true miter spikes to infinity as the angle closes; past this multiple of the
   // half-thickness we clamp the tip and keep the cap, trading a small notch for a hole.
   const MITER_LIMIT = 4;
@@ -1164,8 +1168,11 @@
   // Corner join per wall end. Purely local: group wall ends by shared vertex, sort them
   // by outgoing angle, and miter each end against its immediate angular neighbour on each
   // side. Degree 2 reduces to the usual corner miter; degree 3+ (T- and X-junctions) falls
-  // out of the same rule, with the caps left in place to close the small central void.
-  function computeWallJoins(walls: Wall[], thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)): Map<string, WallJoin> {
+  // out of the same rule, and reports the central void the caller has to lid.
+  function computeWallJoins(
+    walls: Wall[],
+    thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)
+  ): { joins: Map<string, WallJoin>; voids: JunctionVoid[] } {
     const samePoint = (a: Point, b: Point) =>
       Math.abs(a.x - b.x) < WALL_JOIN_EPS && Math.abs(a.y - b.y) < WALL_JOIN_EPS;
 
@@ -1237,6 +1244,7 @@
     }
 
     const result = new Map<string, WallJoin>();
+    const voids: JunctionVoid[] = [];
     const setEnd = (e: End, entry: WallJoinEnd) => {
       const existing = result.get(e.wall.id) ?? {
         start: { uPos: 0, uNeg: 0, capped: true },
@@ -1259,14 +1267,36 @@
 
       group.sort((a, b) => a.angle - b.angle);
 
+      // Going counter-clockwise, the wedge between an end and its next neighbour is
+      // bounded by that end's left face and the neighbour's right face; mirrored on the
+      // other side. The left cut points, in this same order, are the corners of the
+      // polygon left uncovered in the middle of the junction.
+      const cuts = group.map((e, i) => ({
+        left: cutPoint(e, +1, group[(i + 1) % n], -1),
+        right: cutPoint(e, -1, group[(i - 1 + n) % n], +1),
+      }));
+
+      // Two walls meet exactly, so there is nothing in the middle to close. Three or more
+      // leave a real void: its sides are the cap faces, but the top is open to the sky.
+      if (n >= 3) {
+        const poly = cuts.map((c) => c.left.p);
+        let area = 0;
+        for (let i = 0; i < n; i++) {
+          const p = poly[i], q = poly[(i + 1) % n];
+          area += p.x * q.y - q.x * p.y;
+        }
+        if (Math.abs(area) / 2 > 0.5) {
+          voids.push({
+            center: group[0].v,
+            poly,
+            minHeight: Math.min(...group.map((e) => e.wall.height)),
+          });
+        }
+      }
+
       for (let i = 0; i < n; i++) {
         const e = group[i];
-        // Going counter-clockwise, the wedge between e and its next neighbour is bounded
-        // by e's left face and that neighbour's right face; mirrored on the other side.
-        const ccw = group[(i + 1) % n];
-        const cw = group[(i - 1 + n) % n];
-        const cutL = cutPoint(e, +1, ccw, -1);
-        const cutR = cutPoint(e, -1, cw, +1);
+        const { left: cutL, right: cutR } = cuts[i];
 
         const uOf = (p: Point) => (p.x - e.wall.start.x) * e.d.x + (p.y - e.wall.start.y) * e.d.y;
         // Local +z of the wall mesh is the left normal of start->end, so at the start end
@@ -1283,8 +1313,8 @@
         uNeg = clamped.uNeg;
 
         // The cap can only go when the join is exact on both sides and the neighbour is
-        // tall enough to close the whole opening. At degree 3+ the caps bound the small
-        // void left in the middle of the junction, so they always stay.
+        // tall enough to close the whole opening. At degree 3+ the caps are the sides of
+        // the central void, so they always stay.
         let capped = true;
         if (n === 2 && cutL.exact && cutR.exact && !wasClamped) {
           const other = group[(i + 1) % 2];
@@ -1295,7 +1325,27 @@
       }
     }
 
-    return result;
+    return { joins: result, voids };
+  }
+
+  // Flat lid over a junction void. The polygon is star-shaped around the shared vertex by
+  // construction, so a fan from that vertex triangulates it without a general tesselator.
+  function buildJunctionLidGeometry(v: JunctionVoid, y: number): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const n = v.poly.length;
+    for (let i = 0; i < n; i++) {
+      const a = v.poly[i];
+      const b = v.poly[(i + 1) % n];
+      // Wind each triangle so the face points up; plan y maps to world z.
+      const up = (a.x - v.center.x) * (b.y - v.center.y) - (a.y - v.center.y) * (b.x - v.center.x) < 0;
+      const p = up ? [v.center, a, b] : [v.center, b, a];
+      for (const q of p) positions.push(q.x, y, q.y);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(positions.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    return geo;
   }
 
   // Wall prism with mitered (angled) start/end cross-sections. skipStartCap/skipEndCap
@@ -1369,10 +1419,11 @@
     const defaultInteriorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const defaultExteriorMat = new THREE.MeshStandardMaterial({ color: 0xd4cfc9, roughness: 0.85 });
     const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d4, roughness: 0.7 });
-    const wallJoins = computeWallJoins(floor.walls);
+    const { joins: wallJoins, voids: wallVoids } = computeWallJoins(floor.walls);
     // The baseboard is 2 units thicker than its wall (t+2), so its corner points sit
     // further out; reusing the wall-body ones would leave a gap at the outer corner tip.
-    const baseboardJoins = computeWallJoins(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
+    const { joins: baseboardJoins, voids: baseboardVoids } =
+      computeWallJoins(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
 
     for (const wall of floor.walls) {
       // Resolve per-side materials: interior and exterior can have independent color/texture
@@ -1565,6 +1616,17 @@
         if (bbCursor < len) addBaseboardSegment(bbCursor, len);
       }
     }
+
+    // Lids over the voids left in the middle of T- and X-junctions. Without these the
+    // pocket between the mitered ends is open at the top and reads as a dark notch.
+    const addLid = (v: JunctionVoid, y: number, mat: THREE.Material) => {
+      const lid = new THREE.Mesh(buildJunctionLidGeometry(v, y), mat);
+      lid.castShadow = true;
+      lid.receiveShadow = true;
+      wallGroup.add(lid);
+    };
+    for (const v of wallVoids) addLid(v, v.minHeight, defaultInteriorMat);
+    for (const v of baseboardVoids) addLid(v, BASEBOARD_HEIGHT, baseboardMat);
 
     // Doors
     for (const door of floor.doors) {
@@ -1976,7 +2038,7 @@
     
     const defaultInteriorMat = transparentMat(0xffffff);
     const defaultExteriorMat = transparentMat(0xd4cfc9, 0.85);
-    const wallJoins = computeWallJoins(floor.walls);
+    const { joins: wallJoins, voids: wallVoids } = computeWallJoins(floor.walls);
 
     for (const wall of floor.walls) {
       const dx = wall.end.x - wall.start.x;
@@ -2030,7 +2092,12 @@
         group.add(mesh);
       }
     }
-    
+
+    for (const v of wallVoids) {
+      const lid = new THREE.Mesh(buildJunctionLidGeometry(v, v.minHeight + yOffset), defaultInteriorMat);
+      group.add(lid);
+    }
+
     // Simple floor slab
     if (floor.walls.length > 0) {
       let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
