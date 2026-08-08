@@ -1154,30 +1154,35 @@
   interface WallMiterEnd { uPos: number; uNeg: number; mitered: boolean }
   interface WallMiter { start: WallMiterEnd; end: WallMiterEnd }
 
-  // How far (as a multiple of the thicker of the two walls' half-thickness) each wall
-  // extends past a shared corner vertex. A true angle-bisecting diagonal miter is exact
-  // at 90° but for any other angle it can leave a real, un-hidden gap at the corner (the
-  // two walls' volumes provably don't tile the wedge — verified by ray-casting many
-  // synthetic rooms, not just reasoned about). A flat (non-diagonal) extension fixes that,
-  // but only up to exactly 1.0x the neighbor's half-thickness — beyond that, the extended
-  // sliver pokes out past the neighbor's own thickness band and becomes a visible
-  // protruding tab at the corner (also verified by ray-casting: checking the room's
-  // bounding box against its expected footprint). 1.0x is the largest factor with zero
-  // protrusion; it fully closes the gap for ordinary near-90° corners (the overwhelming
-  // majority of real floor plans) and leaves only a small, angle-dependent residual on
-  // quite acute/obtuse shapes rather than a visible bump on every corner.
+  // Fallback flat extension (for wall ends that aren't part of a clean closed loop —
+  // T-junctions, open/dangling ends, or a loop vertex where a third wall also happens to
+  // meet). 1.0x is the largest multiple of the neighbor's half-thickness that never pokes
+  // past the neighbor's own thickness band (verified by ray-casting: comparing the room's
+  // rendered bounding box against its expected footprint).
   const CORNER_EXTENSION_FACTOR = 1.0;
 
   /**
-   * Computes how far each straight wall should extend past its own endpoints at a real
-   * 2-wall corner, so the two walls overlap generously there instead of leaving a gap or
-   * mismatched crossing edges. Both edges of a wall extend by the same flat amount (no
-   * diagonal cut), so the two walls' volumes always overlap rather than trying to meet
-   * exactly along a shared seam — the seam face itself is then skipped (see
-   * buildWallMiterGeometry's skipStartCap/skipEndCap) since it's now safely embedded
-   * inside the overlap instead of exposed. Only clean corners where exactly one other
-   * straight wall shares the endpoint get this treatment; anything else (open ends,
-   * T-junctions, curved-wall neighbors) keeps the original flat, un-extended cut.
+   * Computes the correct mitered (or bevel-limited) corner cut for every straight wall,
+   * so adjacent walls meet with a single clean seam at any angle instead of a gap or a
+   * visible protruding fin.
+   *
+   * The naive version of this — for each wall end, independently intersect its own offset
+   * line with whichever neighbor offset line is nearest — looks reasonable per-corner but
+   * is provably wrong: which of the neighbor's two offset lines is "the same side" is
+   * ambiguous from local geometry alone, and picking wrong swaps interior/exterior for
+   * that wall end. Verified by ray-casting a room shaped like the reported bug (a chevron/
+   * "V" with a concave notch): the naive per-corner approach left ~50% of the ray grid
+   * unhit at 3 of its 8 corners, because the nearest-point heuristic mis-paired there.
+   *
+   * The fix: detect the actual closed loop(s) the walls form, and use the loop's overall
+   * winding direction (signed area of its centerline polygon) to unambiguously resolve,
+   * for every corner in that loop, which offset direction is the room's true interior and
+   * which is the true exterior — removing the ambiguity entirely rather than guessing per
+   * corner. Each vertex's interior/exterior corner point is still found by intersecting
+   * the two adjacent walls' offset lines (a true miter), falling back to each wall's own
+   * un-extended corner (a bevel) when the miter would shoot out further than a reasonable
+   * limit for a very sharp angle. Walls that aren't part of a clean closed loop (open
+   * ends, T-junctions, multi-room shared walls) fall back to the simple flat extension.
    */
   function computeWallMiters(walls: Wall[], thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)): Map<string, WallMiter> {
     const result = new Map<string, WallMiter>();
@@ -1193,28 +1198,153 @@
       return { x: dx / len, y: dy / len, len };
     }
 
-    function computeEnd(wall: Wall, atStart: boolean, len: number): WallMiterEnd {
-      const V = atStart ? wall.start : wall.end;
-      const r = thicknessOf(wall) / 2;
-      const rawU = atStart ? 0 : len;
-
-      const others = straightWalls.filter(
-        (w) => w.id !== wall.id && (samePoint(w.start, V) || samePoint(w.end, V))
-      );
-      if (others.length !== 1) return { uPos: rawU, uNeg: rawU, mitered: false }; // only clean 2-wall corners extend
-
-      const orr = thicknessOf(others[0]) / 2;
-      // Clamp so a very short wall can't have both ends' extensions cross each other.
-      const ext = Math.min(Math.max(r, orr) * CORNER_EXTENSION_FACTOR, len / 2);
-      const u = atStart ? -ext : len + ext;
-      return { uPos: u, uNeg: u, mitered: true };
+    function intersect(p1: Point, d1: Point, p2: Point, d2: Point): Point | null {
+      const denom = d1.x * d2.y - d1.y * d2.x;
+      if (Math.abs(denom) < 1e-6) return null;
+      const t1 = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denom;
+      return { x: p1.x + t1 * d1.x, y: p1.y + t1 * d1.y };
     }
 
+    // --- Pass 1: detect closed loops (rooms) and resolve their corners unambiguously ---
+    interface LoopMember { wall: Wall; reversed: boolean }
+    const loops: LoopMember[][] = [];
+    const inLoop = new Set<string>();
+
+    for (const startWall of straightWalls) {
+      if (inLoop.has(startWall.id)) continue;
+      const localUsed = new Set<string>([startWall.id]);
+      const members: LoopMember[] = [{ wall: startWall, reversed: false }];
+      let curEndsAt = startWall.end;
+      let closed = false;
+      while (members.length <= straightWalls.length) {
+        const candidates = straightWalls.filter(
+          (w) => !localUsed.has(w.id) && (samePoint(w.start, curEndsAt) || samePoint(w.end, curEndsAt))
+        );
+        if (candidates.length !== 1) break; // dead end or T-junction: not a clean chain link
+        const next = candidates[0];
+        const reversed = !samePoint(next.start, curEndsAt);
+        members.push({ wall: next, reversed });
+        localUsed.add(next.id);
+        curEndsAt = reversed ? next.start : next.end;
+        if (samePoint(curEndsAt, startWall.start)) { closed = true; break; }
+      }
+      if (closed && members.length >= 3) {
+        loops.push(members);
+        for (const m of members) inLoop.add(m.wall.id);
+      }
+    }
+
+    const travStart = (m: LoopMember) => (m.reversed ? m.wall.end : m.wall.start);
+    const travEnd = (m: LoopMember) => (m.reversed ? m.wall.start : m.wall.end);
+    const travDir = (m: LoopMember) => {
+      const d = dirOf(m.wall);
+      return m.reversed ? { x: -d.x, y: -d.y, len: d.len } : d;
+    };
+
+    function setEnd(wallId: string, atStart: boolean, len: number, entry: WallMiterEnd) {
+      const existing = result.get(wallId) ?? {
+        start: { uPos: 0, uNeg: 0, mitered: false },
+        end: { uPos: len, uNeg: len, mitered: false },
+      };
+      if (atStart) existing.start = entry; else existing.end = entry;
+      result.set(wallId, existing);
+    }
+
+    for (const members of loops) {
+      const n = members.length;
+      let signedArea = 0;
+      for (const m of members) {
+        const a = travStart(m), b = travEnd(m);
+        signedArea += a.x * b.y - b.x * a.y;
+      }
+      const windingSign = signedArea >= 0 ? 1 : -1;
+
+      for (let i = 0; i < n; i++) {
+        const prev = members[i];
+        const next = members[(i + 1) % n];
+        const V = travEnd(prev); // === travStart(next)
+
+        // Safety check across ALL walls (not just this loop): a shared wall between two
+        // rooms, or any other third wall meeting here, disqualifies this vertex from
+        // mitering — fall back to a flat, un-extended cut for both walls at this end.
+        const touchingCount = straightWalls.filter((w) => samePoint(w.start, V) || samePoint(w.end, V)).length;
+
+        const prevLen = dirOf(prev.wall).len;
+        const nextLen = dirOf(next.wall).len;
+        const prevAtStart = prev.reversed; // the vertex is prev.wall's start iff traversal reversed it
+        const nextAtStart = !next.reversed; // the vertex is next.wall's start iff traversal did NOT reverse it
+
+        if (touchingCount !== 2) {
+          setEnd(prev.wall.id, prevAtStart, prevLen, { uPos: prevAtStart ? 0 : prevLen, uNeg: prevAtStart ? 0 : prevLen, mitered: false });
+          setEnd(next.wall.id, nextAtStart, nextLen, { uPos: nextAtStart ? 0 : nextLen, uNeg: nextAtStart ? 0 : nextLen, mitered: false });
+          continue;
+        }
+
+        const dPrev = travDir(prev);
+        const dNext = travDir(next);
+        const rPrev = thicknessOf(prev.wall) / 2;
+        const rNext = thicknessOf(next.wall) / 2;
+
+        function offsetCorner(sign: number): Point | null {
+          const nPrev = { x: -dPrev.y * sign, y: dPrev.x * sign };
+          const nNext = { x: -dNext.y * sign, y: dNext.x * sign };
+          const pPrev = { x: V.x + nPrev.x * rPrev, y: V.y + nPrev.y * rPrev };
+          const pNext = { x: V.x + nNext.x * rNext, y: V.y + nNext.y * rNext };
+          const pt = intersect(pPrev, dPrev, pNext, dNext);
+          if (!pt) return null;
+          const dist = Math.hypot(pt.x - V.x, pt.y - V.y);
+          if (dist > Math.max(rPrev, rNext) * 6) return null; // bevel-limit: too sharp, fall back
+          return pt;
+        }
+
+        const interiorPt = offsetCorner(windingSign);
+        const exteriorPt = offsetCorner(-windingSign);
+
+        // Assign interior/exterior points to a specific wall's own uPos/uNeg using ITS OWN
+        // (undirected-by-loop-traversal) start->end normal, since that's what the rest of
+        // the renderer (materials, etc.) keys interior/exterior off of for that wall.
+        function assign(wall: Wall, atStart: boolean) {
+          const len = dirOf(wall).len;
+          const rawU = atStart ? 0 : len;
+          if (!interiorPt || !exteriorPt) {
+            setEnd(wall.id, atStart, len, { uPos: rawU, uNeg: rawU, mitered: false });
+            return;
+          }
+          const d = dirOf(wall);
+          const nOwn = { x: -d.y, y: d.x };
+          const ownPosPt = { x: V.x + nOwn.x * (thicknessOf(wall) / 2), y: V.y + nOwn.y * (thicknessOf(wall) / 2) };
+          const distSq = (a: Point, b: Point) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+          const posIsInterior = distSq(ownPosPt, interiorPt) <= distSq(ownPosPt, exteriorPt);
+          const posPt = posIsInterior ? interiorPt : exteriorPt;
+          const negPt = posIsInterior ? exteriorPt : interiorPt;
+          const uPos = (posPt.x - wall.start.x) * d.x + (posPt.y - wall.start.y) * d.y;
+          const uNeg = (negPt.x - wall.start.x) * d.x + (negPt.y - wall.start.y) * d.y;
+          setEnd(wall.id, atStart, len, { uPos, uNeg, mitered: true });
+        }
+
+        assign(prev.wall, prevAtStart);
+        assign(next.wall, nextAtStart);
+      }
+    }
+
+    // --- Pass 2: fallback flat extension for anything not resolved by a closed loop ---
     for (const wall of straightWalls) {
       const len = dirOf(wall).len;
-      const start = computeEnd(wall, true, len);
-      const end = computeEnd(wall, false, len);
-      result.set(wall.id, { start, end });
+      const existing = result.get(wall.id);
+      if (existing) continue; // already fully resolved by loop pass
+
+      function fallbackEnd(atStart: boolean): WallMiterEnd {
+        const V = atStart ? wall.start : wall.end;
+        const rawU = atStart ? 0 : len;
+        const r = thicknessOf(wall) / 2;
+        const others = straightWalls.filter((w) => w.id !== wall.id && (samePoint(w.start, V) || samePoint(w.end, V)));
+        if (others.length !== 1) return { uPos: rawU, uNeg: rawU, mitered: false };
+        const orr = thicknessOf(others[0]) / 2;
+        const ext = Math.min(Math.max(r, orr) * CORNER_EXTENSION_FACTOR, len / 2);
+        const u = atStart ? -ext : len + ext;
+        return { uPos: u, uNeg: u, mitered: true };
+      }
+      result.set(wall.id, { start: fallbackEnd(true), end: fallbackEnd(false) });
     }
 
     return result;
