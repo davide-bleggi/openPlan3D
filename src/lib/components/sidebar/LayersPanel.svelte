@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, layerVisibility } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, layerVisibility, toggleWallHidden } from '$lib/stores/project';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import type { Floor } from '$lib/models/types';
@@ -28,11 +28,19 @@
     selectedElementId.set(id);
   }
 
+  interface LayerItem {
+    id: string;
+    label: string;
+    icon: string;
+    /** Only set for walls: per-element render visibility (see Wall.hidden) */
+    hidden?: boolean;
+  }
+
   interface Category {
     key: keyof typeof vis;
     label: string;
     icon: string;
-    items: { id: string; label: string; icon: string }[];
+    items: LayerItem[];
   }
 
   let categories: Category[] = $derived.by(() => {
@@ -41,7 +49,7 @@
 
     cats.push({
       key: 'walls', label: 'Walls', icon: '🧱',
-      items: floor.walls.map((w, i) => ({ id: w.id, label: `Wall ${i + 1}`, icon: '─' })),
+      items: floor.walls.map((w, i) => ({ id: w.id, label: `Wall ${i + 1}`, icon: '─', hidden: !!w.hidden })),
     });
 
     cats.push({
@@ -145,16 +153,30 @@
         <!-- Items -->
         {#if !collapsed[cat.key]}
           {#each cat.items as item}
-            <button
-              class="w-full flex items-center gap-1.5 pl-7 pr-2 py-1 hover:bg-blue-50 text-left transition-colors"
-              class:bg-blue-100={selId === item.id}
-              class:text-blue-700={selId === item.id}
-              class:opacity-40={!vis[cat.key]}
-              onclick={() => select(item.id)}
-            >
-              <span class="text-[10px]">{item.icon}</span>
-              <span class="truncate flex-1">{item.label}</span>
-            </button>
+            <div class="relative">
+              <button
+                class="w-full flex items-center gap-1.5 pl-7 {cat.key === 'walls' ? 'pr-7' : 'pr-2'} py-1 hover:bg-blue-50 text-left transition-colors"
+                class:bg-blue-100={selId === item.id}
+                class:text-blue-700={selId === item.id}
+                class:opacity-40={!vis[cat.key] || item.hidden}
+                onclick={() => select(item.id)}
+              >
+                <span class="text-[10px]">{item.icon}</span>
+                <span class="truncate flex-1" class:italic={item.hidden}>{item.label}</span>
+              </button>
+              {#if cat.key === 'walls'}
+                <!-- Per-wall render toggle (outside button to avoid nesting) -->
+                <span
+                  role="button"
+                  tabindex="0"
+                  class="inline-flex p-0.5 rounded hover:bg-gray-200 text-[11px] leading-none cursor-pointer absolute right-1.5 top-1"
+                  class:opacity-30={item.hidden}
+                  onclick={(e) => { e.stopPropagation(); toggleWallHidden(item.id); }}
+                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleWallHidden(item.id); } }}
+                  title={item.hidden ? 'Show this wall' : 'Hide this wall (keeps it structural)'}
+                >👁</span>
+              {/if}
+            </div>
           {/each}
           {#if cat.items.length === 0}
             <div class="pl-7 pr-2 py-1 text-gray-300 italic">Empty</div>

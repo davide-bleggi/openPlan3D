@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden } from '$lib/stores/project';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
@@ -348,6 +348,22 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="1"/><line x1="3" y1="18" x2="21" y2="18"/><rect x="7" y="9" width="4" height="4"/><rect x="14" y="10" width="3" height="8"/></svg>
         Elevation
       </button>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gray-500">Visible</span>
+        <button
+          class="px-2 py-0.5 text-xs rounded {selectedWall.hidden ? 'bg-gray-100 text-gray-500 border border-gray-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'}"
+          onclick={() => { if (selectedWall) setWallHidden(selectedWall.id, !selectedWall.hidden); }}
+          title="Hidden walls are not rendered in 3D and appear dashed in the plan. They still bound rooms and keep their dimensions — use this for terrace and balcony railings."
+        >
+          {selectedWall.hidden ? '🚫 Hidden' : '👁 Shown'}
+        </button>
+      </div>
+      {#if selectedWall.hidden}
+        <p class="text-[11px] text-gray-400 leading-snug -mt-1">
+          Not rendered in 3D or in exports; still bounds rooms and keeps its dimensions.
+          Doors and windows on this wall are hidden too.
+        </p>
+      {/if}
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-500">Curved</span>
         <button

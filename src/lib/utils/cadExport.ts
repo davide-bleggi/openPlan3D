@@ -16,7 +16,8 @@ function download(blob: Blob, filename: string) {
 
 // DXF layer colors (AutoCAD Color Index)
 const LAYER_COLORS = {
-  WALLS: 7,       // white/black
+  WALLS: 7,        // white/black
+  WALLS_HIDDEN: 8, // gray — non-rendered walls (terrace/balcony perimeters)
   DOORS: 30,      // brown
   WINDOWS: 5,     // blue
   FURNITURE: 3,   // green
@@ -33,6 +34,7 @@ export function exportDXF(project: Project) {
 
   // Add layers
   d.addLayer('WALLS', LAYER_COLORS.WALLS, 'CONTINUOUS');
+  d.addLayer('WALLS-HIDDEN', LAYER_COLORS.WALLS_HIDDEN, 'CONTINUOUS');
   d.addLayer('DOORS', LAYER_COLORS.DOORS, 'CONTINUOUS');
   d.addLayer('WINDOWS', LAYER_COLORS.WINDOWS, 'CONTINUOUS');
   d.addLayer('FURNITURE', LAYER_COLORS.FURNITURE, 'CONTINUOUS');
@@ -51,13 +53,21 @@ export function exportDXF(project: Project) {
     d.drawText(c.x, -c.y - 12, 5, 0, `${formatArea(room.area, get(projectSettings).units)}`, 'center', 'middle');
   }
 
-  // Draw walls as thick rectangles (offset perpendicular to wall direction)
-  d.setActiveLayer('WALLS');
+  // Draw walls as thick rectangles (offset perpendicular to wall direction).
+  // Hidden walls (terrace/balcony perimeters) go out as a centerline on their
+  // own layer so they stay editable in CAD without reading as built walls.
   for (const w of floor.walls) {
     const dx = w.end.x - w.start.x;
     const dy = w.end.y - w.start.y;
     const len = Math.hypot(dx, dy);
     if (len === 0) continue;
+
+    if (w.hidden) {
+      d.setActiveLayer('WALLS-HIDDEN');
+      d.drawLine(w.start.x, -w.start.y, w.end.x, -w.end.y);
+      continue;
+    }
+    d.setActiveLayer('WALLS');
 
     const half = w.thickness / 2;
     // Perpendicular unit vector
@@ -93,7 +103,7 @@ export function exportDXF(project: Project) {
   d.setActiveLayer('DOORS');
   for (const door of floor.doors) {
     const wall = floor.walls.find(w => w.id === door.wallId);
-    if (!wall) continue;
+    if (!wall || wall.hidden) continue;
 
     const wdx = wall.end.x - wall.start.x;
     const wdy = wall.end.y - wall.start.y;
@@ -142,7 +152,7 @@ export function exportDXF(project: Project) {
   d.setActiveLayer('WINDOWS');
   for (const win of floor.windows) {
     const wall = floor.walls.find(w => w.id === win.wallId);
-    if (!wall) continue;
+    if (!wall || wall.hidden) continue;
 
     const wdx = wall.end.x - wall.start.x;
     const wdy = wall.end.y - wall.start.y;

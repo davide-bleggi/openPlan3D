@@ -519,6 +519,41 @@ export function updateWall(id: string, updates: Partial<Wall>) {
   }, undefined, coalesceKeyFor('wall', id, updates));
 }
 
+/** Show/hide a single wall (rendering only — the wall stays structural). */
+export function setWallHidden(id: string, hidden: boolean) {
+  mutate((f) => {
+    const w = f.walls.find((w) => w.id === id);
+    if (w) w.hidden = hidden || undefined;
+  }, hidden ? 'Hid wall' : 'Showed wall');
+}
+
+export function toggleWallHidden(id: string) {
+  const f = get(activeFloor);
+  const w = f?.walls.find((w) => w.id === id);
+  if (!w) return;
+  setWallHidden(id, !w.hidden);
+}
+
+/**
+ * Show/hide several walls in one undoable step. Ids that are not walls on the
+ * active floor are ignored, so a mixed multi-selection can be passed straight in.
+ * Returns the number of walls actually changed.
+ */
+export function setWallsHidden(ids: Iterable<string>, hidden: boolean): number {
+  const idSet = new Set(ids);
+  const f = get(activeFloor);
+  if (!f) return 0;
+  const targets = f.walls.filter((w) => idSet.has(w.id) && !!w.hidden !== hidden);
+  if (targets.length === 0) return 0;
+  const targetIds = new Set(targets.map((w) => w.id));
+  mutate((floor) => {
+    for (const w of floor.walls) {
+      if (targetIds.has(w.id)) w.hidden = hidden || undefined;
+    }
+  }, `${hidden ? 'Hid' : 'Showed'} ${targets.length} wall${targets.length === 1 ? '' : 's'}`);
+  return targets.length;
+}
+
 export function updateDoor(id: string, updates: Partial<Door>) {
   mutate((f) => {
     const d = f.doors.find((d) => d.id === id);

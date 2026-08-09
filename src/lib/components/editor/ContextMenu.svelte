@@ -18,12 +18,14 @@
     targetWall?: Wall | null;
     targetFurniture?: FurnitureItem | null;
     targetRoom?: Room | null;
+    /** How many walls are in the current multi-selection (drives bulk actions) */
+    selectedWallCount?: number;
     clipboard?: any;
     onclose: () => void;
     onaction: (action: string, data?: any) => void;
   }
 
-  let { x, y, visible, targetType, targetId, targetWall, targetFurniture, targetRoom, clipboard, onclose, onaction }: Props = $props();
+  let { x, y, visible, targetType, targetId, targetWall, targetFurniture, targetRoom, selectedWallCount = 0, clipboard, onclose, onaction }: Props = $props();
 
   let menuEl: HTMLDivElement;
 
@@ -113,6 +115,17 @@
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('toggle-curve')}>
         <span class="ctx-icon">〰️</span> Curve {targetWall?.curvePoint ? 'Off' : 'On'}
       </button>
+      <button class="ctx-item" role="menuitem" onclick={() => clickItem('toggle-wall-hidden')}>
+        <span class="ctx-icon">{targetWall?.hidden ? '👁' : '🚫'}</span> {targetWall?.hidden ? 'Show Wall' : 'Hide Wall (no 3D render)'}
+      </button>
+      {#if selectedWallCount > 1}
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('hide-selected-walls')}>
+          <span class="ctx-icon">🚫</span> Hide {selectedWallCount} Selected Walls
+        </button>
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('show-selected-walls')}>
+          <span class="ctx-icon">👁</span> Show {selectedWallCount} Selected Walls
+        </button>
+      {/if}
       <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('properties')}>
         <span class="ctx-icon">⚙️</span> Properties
@@ -162,6 +175,14 @@
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('add-wall')}>
         <span class="ctx-icon">🧱</span> Add Wall
       </button>
+      {#if selectedWallCount > 0}
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('hide-selected-walls')}>
+          <span class="ctx-icon">🚫</span> Hide {selectedWallCount} Selected Wall{selectedWallCount === 1 ? '' : 's'}
+        </button>
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('show-selected-walls')}>
+          <span class="ctx-icon">👁</span> Show {selectedWallCount} Selected Wall{selectedWallCount === 1 ? '' : 's'}
+        </button>
+      {/if}
       <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('zoom-to-fit')}>
         <span class="ctx-icon">🔍</span> Zoom to Fit

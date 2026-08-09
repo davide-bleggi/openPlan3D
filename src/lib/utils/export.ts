@@ -30,7 +30,7 @@ function extendBoundsForOpenings(
 ) {
   for (const d of floor.doors) {
     const wall = floor.walls.find(w => w.id === d.wallId);
-    if (!wall) continue;
+    if (!wall || wall.hidden) continue;
     const px = wall.start.x + (wall.end.x - wall.start.x) * d.position;
     const py = wall.start.y + (wall.end.y - wall.start.y) * d.position;
     bounds.minX = Math.min(bounds.minX, px - d.width);
@@ -55,12 +55,35 @@ function drawOpeningsOnCanvas(
   const cs: CanvasState = { ctx, width: pad * 2, height: pad * 2, zoom: 1, camX: minX, camY: minY };
   for (const d of floor.doors) {
     const wall = floor.walls.find(w => w.id === d.wallId);
-    if (wall) drawDoorOnWall(cs, wall, d);
+    if (wall && !wall.hidden) drawDoorOnWall(cs, wall, d);
   }
   for (const win of floor.windows) {
     const wall = floor.walls.find(w => w.id === win.wallId);
-    if (wall) drawWindowOnWall(cs, wall, win);
+    if (wall && !wall.hidden) drawWindowOnWall(cs, wall, win);
   }
+}
+
+/**
+ * Stroke a wall's centerline on an export canvas. Hidden walls (terrace and
+ * balcony perimeters) are drawn as a thin dashed line instead of a solid wall.
+ * Returns with the dash pattern reset.
+ */
+function strokeExportWall(
+  ctx: CanvasRenderingContext2D,
+  wall: Floor['walls'][number],
+  minX: number,
+  minY: number,
+  pad: number,
+  solidColor: string,
+) {
+  ctx.strokeStyle = wall.hidden ? '#9ca3af' : solidColor;
+  ctx.lineWidth = wall.hidden ? 2 : wall.thickness;
+  ctx.setLineDash(wall.hidden ? [10, 8] : []);
+  ctx.beginPath();
+  ctx.moveTo(wall.start.x - minX + pad, wall.start.y - minY + pad);
+  ctx.lineTo(wall.end.x - minX + pad, wall.end.y - minY + pad);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 /**
@@ -133,14 +156,9 @@ export function exportAsPNG(canvas: HTMLCanvasElement, project?: Project) {
       }
 
       // Draw walls
-      ctx.strokeStyle = '#333';
       ctx.lineCap = 'round';
       for (const wall of floor.walls) {
-        ctx.lineWidth = wall.thickness;
-        ctx.beginPath();
-        ctx.moveTo(wall.start.x - minX + pad, wall.start.y - minY + pad);
-        ctx.lineTo(wall.end.x - minX + pad, wall.end.y - minY + pad);
-        ctx.stroke();
+        strokeExportWall(ctx, wall, minX, minY, pad, '#333');
         // Dimension label
         const len = Math.round(Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y));
         const mx = (wall.start.x + wall.end.x) / 2 - minX + pad;
@@ -254,7 +272,10 @@ export function exportAsSVG(project: Project) {
     const y1 = w.start.y - minY + pad;
     const x2 = w.end.x - minX + pad;
     const y2 = w.end.y - minY + pad;
-    paths += `  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#333" stroke-width="${w.thickness}" stroke-linecap="round"/>\n`;
+    // Hidden walls (terrace/balcony perimeters) print as a thin dashed line
+    paths += w.hidden
+      ? `  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#9ca3af" stroke-width="2" stroke-dasharray="10 8" stroke-linecap="round"/>\n`
+      : `  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#333" stroke-width="${w.thickness}" stroke-linecap="round"/>\n`;
     // dimension label
     const len = Math.round(Math.hypot(x2 - x1, y2 - y1));
     const mx = (x1 + x2) / 2;
@@ -266,7 +287,7 @@ export function exportAsSVG(project: Project) {
   const n2 = (v: number) => v.toFixed(2);
   for (const d of floor.doors) {
     const wall = floor.walls.find(w => w.id === d.wallId);
-    if (!wall) continue;
+    if (!wall || wall.hidden) continue;
     const wdx = wall.end.x - wall.start.x;
     const wdy = wall.end.y - wall.start.y;
     const wlen = Math.hypot(wdx, wdy) || 1;
@@ -368,7 +389,7 @@ export function exportAsSVG(project: Project) {
   // Windows: wall gap + double-line glyph
   for (const win of floor.windows) {
     const wall = floor.walls.find(w => w.id === win.wallId);
-    if (!wall) continue;
+    if (!wall || wall.hidden) continue;
     const wdx = wall.end.x - wall.start.x;
     const wdy = wall.end.y - wall.start.y;
     const wlen = Math.hypot(wdx, wdy) || 1;
@@ -601,14 +622,9 @@ export function exportPDF(project: Project) {
   }
 
   // Walls
-  ctx.strokeStyle = '#333';
   ctx.lineCap = 'round';
   for (const wall of floor.walls) {
-    ctx.lineWidth = wall.thickness;
-    ctx.beginPath();
-    ctx.moveTo(wall.start.x - minX + pad, wall.start.y - minY + pad);
-    ctx.lineTo(wall.end.x - minX + pad, wall.end.y - minY + pad);
-    ctx.stroke();
+    strokeExportWall(ctx, wall, minX, minY, pad, '#333');
     const len = Math.round(Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y));
     const mx = (wall.start.x + wall.end.x) / 2 - minX + pad;
     const my = (wall.start.y + wall.end.y) / 2 - minY + pad;
