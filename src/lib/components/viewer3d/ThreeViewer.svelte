@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { activeFloor, currentProject, detectedRoomsStore, selectedElementId } from '$lib/stores/project';
-  import type { Floor, Wall, Door, Window as Win, Room, Stair } from '$lib/models/types';
+  import type { Floor, Wall, Door, Window as Win, Room, Stair, Point } from '$lib/models/types';
   import { wallColors, type WallColor } from '$lib/utils/materials';
   import { projectSettings, formatArea } from '$lib/stores/settings';
   import * as THREE from 'three';
@@ -591,6 +591,7 @@
 
   const WALL_THICKNESS = 15;
   const BASEBOARD_HEIGHT = 8;
+  const WALL_JOIN_EPS = 5; // snap distance for matching wall endpoints (mirrors roomDetection.ts)
 
   // Create a canvas-based floor texture
   function createFloorTexture(): THREE.CanvasTexture {
@@ -1150,6 +1151,267 @@
     }
   }
 
+  // uPos / uNeg are the cut positions along the wall axis on its +normal and -normal side.
+  // capped=false means the neighbour's volume closes this end exactly, so the cap face
+  // would be an internal boundary and is dropped.
+  interface WallJoinEnd { uPos: number; uNeg: number; capped: boolean }
+  interface WallJoin { start: WallJoinEnd; end: WallJoinEnd }
+
+  // Where three or more walls meet, the mitered ends leave a small polygon in the middle
+  // that no wall covers. The cap faces close it on the sides; it still needs a lid.
+  interface JunctionVoid { center: Point; poly: Point[]; minHeight: number }
+
+  // A true miter spikes to infinity as the angle closes; past this multiple of the
+  // half-thickness we clamp the tip and keep the cap, trading a small notch for a hole.
+  const MITER_LIMIT = 4;
+
+  // Corner join per wall end. Purely local: group wall ends by shared vertex, sort them
+  // by outgoing angle, and miter each end against its immediate angular neighbour on each
+  // side. Degree 2 reduces to the usual corner miter; degree 3+ (T- and X-junctions) falls
+  // out of the same rule, and reports the central void the caller has to lid.
+  function computeWallJoins(
+    walls: Wall[],
+    thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)
+  ): { joins: Map<string, WallJoin>; voids: JunctionVoid[] } {
+    const samePoint = (a: Point, b: Point) =>
+      Math.abs(a.x - b.x) < WALL_JOIN_EPS && Math.abs(a.y - b.y) < WALL_JOIN_EPS;
+
+    // One record per wall endpoint. dOut points away from the shared vertex, along the
+    // wall, so the angular order around the vertex is just atan2(dOut).
+    interface End {
+      wall: Wall;
+      atStart: boolean;
+      v: Point;
+      d: Point;      // wall direction, start -> end
+      dOut: Point;   // direction away from v
+      r: number;
+      len: number;
+      angle: number;
+    }
+
+    const ends: End[] = [];
+    for (const wall of walls) {
+      if (wall.curvePoint) continue;
+      const dx = wall.end.x - wall.start.x;
+      const dy = wall.end.y - wall.start.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      const d = { x: dx / len, y: dy / len };
+      const r = thicknessOf(wall) / 2;
+      for (const atStart of [true, false]) {
+        const dOut = atStart ? d : { x: -d.x, y: -d.y };
+        ends.push({
+          wall, atStart, v: atStart ? wall.start : wall.end, d, dOut, r, len,
+          angle: Math.atan2(dOut.y, dOut.x),
+        });
+      }
+    }
+
+    // Group endpoints that land on the same vertex (same tolerance as roomDetection).
+    const vertices: End[][] = [];
+    for (const e of ends) {
+      const group = vertices.find((g) => samePoint(g[0].v, e.v));
+      if (group) group.push(e); else vertices.push([e]);
+    }
+
+    // Where the two offset lines meet. `sideA`/`sideB` pick which side of each wall
+    // (+1 = left of dOut) the offset line sits on.
+    function cutPoint(a: End, sideA: number, b: End, sideB: number): { p: Point; exact: boolean } {
+      const nA = { x: -a.dOut.y * sideA, y: a.dOut.x * sideA };
+      const nB = { x: -b.dOut.y * sideB, y: b.dOut.x * sideB };
+      const pA = { x: a.v.x + nA.x * a.r, y: a.v.y + nA.y * a.r };
+      const pB = { x: b.v.x + nB.x * b.r, y: b.v.y + nB.y * b.r };
+      const denom = a.dOut.x * b.dOut.y - a.dOut.y * b.dOut.x;
+
+      if (Math.abs(denom) < 1e-6) {
+        // Parallel offset lines. Anti-parallel means the two walls run straight through
+        // each other, and equal radii make the faces continuous — a flat cut at the
+        // vertex is then exact. Same-direction (overlapping walls) never is.
+        const straightThrough = a.dOut.x * b.dOut.x + a.dOut.y * b.dOut.y < -0.999;
+        return { p: pA, exact: straightThrough && Math.abs(a.r - b.r) < 1e-6 };
+      }
+
+      const t = ((pB.x - pA.x) * b.dOut.y - (pB.y - pA.y) * b.dOut.x) / denom;
+      const p = { x: pA.x + t * a.dOut.x, y: pA.y + t * a.dOut.y };
+      const reach = Math.hypot(p.x - a.v.x, p.y - a.v.y);
+      const limit = Math.max(a.r, b.r) * MITER_LIMIT;
+      if (reach > limit) {
+        // Too acute for a spike: pull the tip back to the limit and keep the cap.
+        const k = limit / reach;
+        return { p: { x: a.v.x + (p.x - a.v.x) * k, y: a.v.y + (p.y - a.v.y) * k }, exact: false };
+      }
+      return { p, exact: true };
+    }
+
+    const result = new Map<string, WallJoin>();
+    const voids: JunctionVoid[] = [];
+    const setEnd = (e: End, entry: WallJoinEnd) => {
+      const existing = result.get(e.wall.id) ?? {
+        start: { uPos: 0, uNeg: 0, capped: true },
+        end: { uPos: e.len, uNeg: e.len, capped: true },
+      };
+      if (e.atStart) existing.start = entry; else existing.end = entry;
+      result.set(e.wall.id, existing);
+    };
+
+    for (const group of vertices) {
+      const n = group.length;
+
+      // A free end stays square.
+      if (n < 2) {
+        const e = group[0];
+        const u = e.atStart ? 0 : e.len;
+        setEnd(e, { uPos: u, uNeg: u, capped: true });
+        continue;
+      }
+
+      group.sort((a, b) => a.angle - b.angle);
+
+      // Going counter-clockwise, the wedge between an end and its next neighbour is
+      // bounded by that end's left face and the neighbour's right face; mirrored on the
+      // other side. The left cut points, in this same order, are the corners of the
+      // polygon left uncovered in the middle of the junction.
+      const cuts = group.map((e, i) => ({
+        left: cutPoint(e, +1, group[(i + 1) % n], -1),
+        right: cutPoint(e, -1, group[(i - 1 + n) % n], +1),
+      }));
+
+      // Two walls meet exactly, so there is nothing in the middle to close. Three or more
+      // leave a real void: its sides are the cap faces, but the top is open to the sky.
+      if (n >= 3) {
+        const poly = cuts.map((c) => c.left.p);
+        let area = 0;
+        for (let i = 0; i < n; i++) {
+          const p = poly[i], q = poly[(i + 1) % n];
+          area += p.x * q.y - q.x * p.y;
+        }
+        if (Math.abs(area) / 2 > 0.5) {
+          voids.push({
+            center: group[0].v,
+            poly,
+            minHeight: Math.min(...group.map((e) => e.wall.height)),
+          });
+        }
+      }
+
+      for (let i = 0; i < n; i++) {
+        const e = group[i];
+        const { left: cutL, right: cutR } = cuts[i];
+
+        const uOf = (p: Point) => (p.x - e.wall.start.x) * e.d.x + (p.y - e.wall.start.y) * e.d.y;
+        // Local +z of the wall mesh is the left normal of start->end, so at the start end
+        // "left of dOut" is the +normal side and at the far end it is the -normal side.
+        let uPos = e.atStart ? uOf(cutL.p) : uOf(cutR.p);
+        let uNeg = e.atStart ? uOf(cutR.p) : uOf(cutL.p);
+
+        // Never let a cut cross the wall's midpoint — a short wall between two thick ones
+        // would otherwise invert.
+        const clampU = (u: number) => (e.atStart ? Math.min(u, e.len / 2) : Math.max(u, e.len / 2));
+        const clamped = { uPos: clampU(uPos), uNeg: clampU(uNeg) };
+        const wasClamped = clamped.uPos !== uPos || clamped.uNeg !== uNeg;
+        uPos = clamped.uPos;
+        uNeg = clamped.uNeg;
+
+        // The cap can only go when the join is exact on both sides and the neighbour is
+        // tall enough to close the whole opening. At degree 3+ the caps are the sides of
+        // the central void, so they always stay.
+        let capped = true;
+        if (n === 2 && cutL.exact && cutR.exact && !wasClamped) {
+          const other = group[(i + 1) % 2];
+          capped = e.wall.height > other.wall.height;
+        }
+
+        setEnd(e, { uPos, uNeg, capped });
+      }
+    }
+
+    return { joins: result, voids };
+  }
+
+  // Flat lid over a junction void. The polygon is star-shaped around the shared vertex by
+  // construction, so a fan from that vertex triangulates it without a general tesselator.
+  function buildJunctionLidGeometry(v: JunctionVoid, y: number): THREE.BufferGeometry {
+    const positions: number[] = [];
+    const n = v.poly.length;
+    for (let i = 0; i < n; i++) {
+      const a = v.poly[i];
+      const b = v.poly[(i + 1) % n];
+      // Wind each triangle so the face points up; plan y maps to world z.
+      const up = (a.x - v.center.x) * (b.y - v.center.y) - (a.y - v.center.y) * (b.x - v.center.x) < 0;
+      const p = up ? [v.center, a, b] : [v.center, b, a];
+      for (const q of p) positions.push(q.x, y, q.y);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(positions.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    return geo;
+  }
+
+  // Wall prism with mitered (angled) start/end cross-sections. skipStartCap/skipEndCap
+  // omit the cap face at a real miter join (it's an internal boundary, not a surface).
+  function buildWallMiterGeometry(
+    u0Pos: number, u0Neg: number, u1Pos: number, u1Neg: number,
+    r: number, yBottom: number, yTop: number,
+    skipStartCap: boolean = false, skipEndCap: boolean = false
+  ): THREE.BufferGeometry {
+    const P: [number, number, number][] = [
+      [u0Pos, yBottom, r],  // 0 start-pos-bottom
+      [u0Neg, yBottom, -r], // 1 start-neg-bottom
+      [u1Neg, yBottom, -r], // 2 end-neg-bottom
+      [u1Pos, yBottom, r],  // 3 end-pos-bottom
+      [u0Pos, yTop, r],     // 4 start-pos-top
+      [u0Neg, yTop, -r],    // 5 start-neg-top
+      [u1Neg, yTop, -r],    // 6 end-neg-top
+      [u1Pos, yTop, r],     // 7 end-pos-top
+    ];
+
+    // Each entry: corner indices in CCW order (as seen from outside the solid) + material index
+    const allFaces: [number[], number][] = [
+      [[0, 4, 5, 1], 0], // start cap
+      [[3, 2, 6, 7], 1], // end cap
+      [[4, 7, 6, 5], 2], // top
+      [[0, 1, 2, 3], 3], // bottom
+      [[0, 3, 7, 4], 4], // interior side (+r)
+      [[1, 5, 6, 2], 5], // exterior side (-r)
+    ];
+    const faces = allFaces.filter(([, materialIndex]) =>
+      !(skipStartCap && materialIndex === 0) && !(skipEndCap && materialIndex === 1)
+    );
+
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    let vertCount = 0;
+    const geo = new THREE.BufferGeometry();
+
+    for (const [idx, materialIndex] of faces) {
+      const [a, b, c, d] = idx.map((i) => P[i]);
+      const ax = b[0] - a[0], ay = b[1] - a[1], az = b[2] - a[2];
+      const bx = c[0] - a[0], by = c[1] - a[1], bz = c[2] - a[2];
+      let nx = ay * bz - az * by;
+      let ny = az * bx - ax * bz;
+      let nz = ax * by - ay * bx;
+      const nlen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nlen; ny /= nlen; nz /= nlen;
+
+      const quad = [a, b, c, a, c, d];
+      const quadUv: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]];
+      for (let i = 0; i < 6; i++) {
+        positions.push(quad[i][0], quad[i][1], quad[i][2]);
+        normals.push(nx, ny, nz);
+        uvs.push(quadUv[i][0], quadUv[i][1]);
+      }
+      geo.addGroup(vertCount, 6, materialIndex);
+      vertCount += 6;
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    return geo;
+  }
+
   function buildWalls(floor: Floor) {
     clearGroup(wallGroup);
     wallMeshMap.clear();
@@ -1157,6 +1419,11 @@
     const defaultInteriorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const defaultExteriorMat = new THREE.MeshStandardMaterial({ color: 0xd4cfc9, roughness: 0.85 });
     const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d4, roughness: 0.7 });
+    const { joins: wallJoins, voids: wallVoids } = computeWallJoins(floor.walls);
+    // The baseboard is 2 units thicker than its wall (t+2), so its corner points sit
+    // further out; reusing the wall-body ones would leave a gap at the outer corner tip.
+    const { joins: baseboardJoins, voids: baseboardVoids } =
+      computeWallJoins(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
 
     for (const wall of floor.walls) {
       // Resolve per-side materials: interior and exterior can have independent color/texture
@@ -1266,24 +1533,41 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
+      // Always present: computeWallJoins returns an entry for every straight wall.
+      const join = wallJoins.get(wall.id)!;
+      const r = t / 2;
 
       for (const seg of segments) {
-        const geo = new THREE.BoxGeometry(seg.width, seg.height, t);
-
         // Create a multi-material wall: interior white, exterior brown
         const materials = [
-          exteriorMat, exteriorMat, // left, right
+          exteriorMat, exteriorMat, // start cap, end cap
           interiorMat, interiorMat, // top, bottom
-          interiorMat, exteriorMat, // front (interior), back (exterior)
+          interiorMat, exteriorMat, // interior side, exterior side
         ];
+
+        // Only the segments touching the wall's true start/end get a mitered cut;
+        // segments carved out around door/window openings keep a flat perpendicular cut.
+        const segU0 = seg.offsetX - seg.width / 2;
+        const segU1 = seg.offsetX + seg.width / 2;
+        const touchesStart = segU0 <= WALL_JOIN_EPS;
+        const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = touchesStart ? join.start.uPos : segU0;
+        const u0Neg = touchesStart ? join.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? join.end.uPos : segU1;
+        const u1Neg = touchesEnd ? join.end.uNeg : segU1;
+        const mid = (segU0 + segU1) / 2;
+        const skipStartCap = touchesStart && !join.start.capped;
+        const skipEndCap = touchesEnd && !join.end.capped;
+
+        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height, skipStartCap, skipEndCap);
         const mesh = new THREE.Mesh(geo, materials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
 
-        const localX = seg.offsetX - len / 2;
+        const localX = mid - len / 2;
         mesh.position.set(
           cx + localX * Math.cos(angle),
-          seg.height / 2 + seg.offsetY,
+          seg.offsetY,
           cy + localX * Math.sin(angle)
         );
         mesh.rotation.y = -angle;
@@ -1292,15 +1576,33 @@
         wallGroup.add(mesh);
       }
 
-      // Baseboard — with gaps at door openings
+      // Baseboard — with gaps at door openings; mirrors the wall body's mitered corners
+      // from its own join map, computed at the baseboard's larger radius.
       const doorOpeningsForBB = floor.doors.filter((d) => d.wallId === wall.id);
-      if (doorOpeningsForBB.length === 0) {
-        const bbGeo = new THREE.BoxGeometry(len, BASEBOARD_HEIGHT, t + 2);
+      const bbJoin = baseboardJoins.get(wall.id)!;
+      const bbR = (t + 2) / 2;
+      const addBaseboardSegment = (segU0: number, segU1: number) => {
+        const touchesStart = segU0 <= WALL_JOIN_EPS;
+        const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = touchesStart ? bbJoin.start.uPos : segU0;
+        const u0Neg = touchesStart ? bbJoin.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? bbJoin.end.uPos : segU1;
+        const u1Neg = touchesEnd ? bbJoin.end.uNeg : segU1;
+        const mid = (segU0 + segU1) / 2;
+        const skipStartCap = touchesStart && !bbJoin.start.capped;
+        const skipEndCap = touchesEnd && !bbJoin.end.capped;
+
+        const bbGeo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, bbR, 0, BASEBOARD_HEIGHT, skipStartCap, skipEndCap);
         const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
-        bbMesh.position.set(cx, BASEBOARD_HEIGHT / 2, cy);
+        const localX = mid - len / 2;
+        bbMesh.position.set(cx + localX * Math.cos(angle), 0, cy + localX * Math.sin(angle));
         bbMesh.rotation.y = -angle;
         bbMesh.castShadow = true;
         wallGroup.add(bbMesh);
+      };
+
+      if (doorOpeningsForBB.length === 0) {
+        addBaseboardSegment(0, len);
       } else {
         // Build baseboard segments skipping door gaps
         const sortedDoors = [...doorOpeningsForBB].sort((a, b) => a.position - b.position);
@@ -1308,38 +1610,23 @@
         for (const door of sortedDoors) {
           const dLeft = door.position * len - door.width / 2;
           const dRight = door.position * len + door.width / 2;
-          if (dLeft > bbCursor) {
-            const segLen = dLeft - bbCursor;
-            const segCenter = bbCursor + segLen / 2 - len / 2;
-            const bbGeo = new THREE.BoxGeometry(segLen, BASEBOARD_HEIGHT, t + 2);
-            const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
-            bbMesh.position.set(
-              cx + segCenter * Math.cos(angle),
-              BASEBOARD_HEIGHT / 2,
-              cy + segCenter * Math.sin(angle)
-            );
-            bbMesh.rotation.y = -angle;
-            bbMesh.castShadow = true;
-            wallGroup.add(bbMesh);
-          }
+          if (dLeft > bbCursor) addBaseboardSegment(bbCursor, dLeft);
           bbCursor = Math.max(bbCursor, dRight);
         }
-        if (bbCursor < len) {
-          const segLen = len - bbCursor;
-          const segCenter = bbCursor + segLen / 2 - len / 2;
-          const bbGeo = new THREE.BoxGeometry(segLen, BASEBOARD_HEIGHT, t + 2);
-          const bbMesh = new THREE.Mesh(bbGeo, baseboardMat);
-          bbMesh.position.set(
-            cx + segCenter * Math.cos(angle),
-            BASEBOARD_HEIGHT / 2,
-            cy + segCenter * Math.sin(angle)
-          );
-          bbMesh.rotation.y = -angle;
-          bbMesh.castShadow = true;
-          wallGroup.add(bbMesh);
-        }
+        if (bbCursor < len) addBaseboardSegment(bbCursor, len);
       }
     }
+
+    // Lids over the voids left in the middle of T- and X-junctions. Without these the
+    // pocket between the mitered ends is open at the top and reads as a dark notch.
+    const addLid = (v: JunctionVoid, y: number, mat: THREE.Material) => {
+      const lid = new THREE.Mesh(buildJunctionLidGeometry(v, y), mat);
+      lid.castShadow = true;
+      lid.receiveShadow = true;
+      wallGroup.add(lid);
+    };
+    for (const v of wallVoids) addLid(v, v.minHeight, defaultInteriorMat);
+    for (const v of baseboardVoids) addLid(v, BASEBOARD_HEIGHT, baseboardMat);
 
     // Doors
     for (const door of floor.doors) {
@@ -1751,6 +2038,7 @@
     
     const defaultInteriorMat = transparentMat(0xffffff);
     const defaultExteriorMat = transparentMat(0xd4cfc9, 0.85);
+    const { joins: wallJoins, voids: wallVoids } = computeWallJoins(floor.walls);
 
     for (const wall of floor.walls) {
       const dx = wall.end.x - wall.start.x;
@@ -1767,6 +2055,9 @@
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
       const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
+      // Always present: computeWallJoins returns an entry for every straight wall.
+      const join = wallJoins.get(wall.id)!;
+      const r = t / 2;
 
       const materials = [
         defaultExteriorMat, defaultExteriorMat,
@@ -1775,21 +2066,38 @@
       ];
 
       for (const seg of segments) {
-        const geo = new THREE.BoxGeometry(seg.width, seg.height, t);
+        const segU0 = seg.offsetX - seg.width / 2;
+        const segU1 = seg.offsetX + seg.width / 2;
+        const touchesStart = segU0 <= WALL_JOIN_EPS;
+        const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
+        const u0Pos = touchesStart ? join.start.uPos : segU0;
+        const u0Neg = touchesStart ? join.start.uNeg : segU0;
+        const u1Pos = touchesEnd ? join.end.uPos : segU1;
+        const u1Neg = touchesEnd ? join.end.uNeg : segU1;
+        const mid = (segU0 + segU1) / 2;
+        const skipStartCap = touchesStart && !join.start.capped;
+        const skipEndCap = touchesEnd && !join.end.capped;
+
+        const geo = buildWallMiterGeometry(u0Pos - mid, u0Neg - mid, u1Pos - mid, u1Neg - mid, r, 0, seg.height, skipStartCap, skipEndCap);
         const mesh = new THREE.Mesh(geo, materials);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        const localX = seg.offsetX - len / 2;
+        const localX = mid - len / 2;
         mesh.position.set(
           cx + localX * Math.cos(angle),
-          seg.height / 2 + seg.offsetY + yOffset,
+          seg.offsetY + yOffset,
           cy + localX * Math.sin(angle)
         );
         mesh.rotation.y = -angle;
         group.add(mesh);
       }
     }
-    
+
+    for (const v of wallVoids) {
+      const lid = new THREE.Mesh(buildJunctionLidGeometry(v, v.minHeight + yOffset), defaultInteriorMat);
+      group.add(lid);
+    }
+
     // Simple floor slab
     if (floor.walls.length > 0) {
       let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
