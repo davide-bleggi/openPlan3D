@@ -1151,201 +1151,233 @@
     }
   }
 
-  // uPos / uNeg are the cut positions along the wall axis on its +normal and -normal side.
-  // capped=false means the neighbour's volume closes this end exactly, so the cap face
-  // would be an internal boundary and is dropped.
-  interface WallJoinEnd { uPos: number; uNeg: number; capped: boolean }
+  interface WallJoinEnd {
+    cutOnPositiveSide: number;  // where to cut, along the wall axis, on its +normal side
+    cutOnNegativeSide: number;
+    capped: boolean;            // false once the neighbour's volume closes this end exactly
+  }
   interface WallJoin { start: WallJoinEnd; end: WallJoinEnd }
-
-  // Where three or more walls meet, the mitered ends leave a small polygon in the middle
-  // that no wall covers. The cap faces close it on the sides; it still needs a lid.
-  interface JunctionVoid { center: Point; poly: Point[]; minHeight: number }
+  interface JunctionVoid { vertex: Point; corners: Point[]; lowestWallHeight: number }
 
   // A true miter spikes to infinity as the angle closes; past this multiple of the
-  // half-thickness we clamp the tip and keep the cap, trading a small notch for a hole.
+  // half-thickness the tip is clamped and the cap kept, trading a notch for a hole.
   const MITER_LIMIT = 4;
+
+  const LEFT_OF_OUTWARD = 1;
+  const RIGHT_OF_OUTWARD = -1;
 
   // Corner join per wall end. Purely local: group wall ends by shared vertex, sort them
   // by outgoing angle, and miter each end against its immediate angular neighbour on each
-  // side. Degree 2 reduces to the usual corner miter; degree 3+ (T- and X-junctions) falls
-  // out of the same rule, and reports the central void the caller has to lid.
+  // side. Two walls at a vertex reduce to the usual corner miter; three or more (T- and
+  // X-junctions) fall out of the same rule and leave a void for the caller to lid.
   function computeWallJoins(
     walls: Wall[],
     thicknessOf: (w: Wall) => number = (w) => Math.max(w.thickness, WALL_THICKNESS)
   ): { joins: Map<string, WallJoin>; voids: JunctionVoid[] } {
-    const samePoint = (a: Point, b: Point) =>
+    const isSameVertex = (a: Point, b: Point) =>
       Math.abs(a.x - b.x) < WALL_JOIN_EPS && Math.abs(a.y - b.y) < WALL_JOIN_EPS;
 
-    // One record per wall endpoint. dOut points away from the shared vertex, along the
-    // wall, so the angular order around the vertex is just atan2(dOut).
-    interface End {
+    interface WallEnd {
       wall: Wall;
-      atStart: boolean;
-      v: Point;
-      d: Point;      // wall direction, start -> end
-      dOut: Point;   // direction away from v
-      r: number;
-      len: number;
-      angle: number;
+      isStartEnd: boolean;
+      vertex: Point;
+      alongWall: Point;      // unit direction, wall start -> end
+      outward: Point;        // unit direction leading away from the vertex
+      halfThickness: number;
+      wallLength: number;
+      outwardAngle: number;  // sorting these orders the ends around the vertex
     }
 
-    const ends: End[] = [];
+    const wallEnds: WallEnd[] = [];
     for (const wall of walls) {
       if (wall.curvePoint) continue;
-      const dx = wall.end.x - wall.start.x;
-      const dy = wall.end.y - wall.start.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 1) continue;
-      const d = { x: dx / len, y: dy / len };
-      const r = thicknessOf(wall) / 2;
-      for (const atStart of [true, false]) {
-        const dOut = atStart ? d : { x: -d.x, y: -d.y };
-        ends.push({
-          wall, atStart, v: atStart ? wall.start : wall.end, d, dOut, r, len,
-          angle: Math.atan2(dOut.y, dOut.x),
+      const deltaX = wall.end.x - wall.start.x;
+      const deltaY = wall.end.y - wall.start.y;
+      const wallLength = Math.hypot(deltaX, deltaY);
+      if (wallLength < 1) continue;
+      const alongWall = { x: deltaX / wallLength, y: deltaY / wallLength };
+      const halfThickness = thicknessOf(wall) / 2;
+      for (const isStartEnd of [true, false]) {
+        const outward = isStartEnd ? alongWall : { x: -alongWall.x, y: -alongWall.y };
+        wallEnds.push({
+          wall, isStartEnd, vertex: isStartEnd ? wall.start : wall.end,
+          alongWall, outward, halfThickness, wallLength,
+          outwardAngle: Math.atan2(outward.y, outward.x),
         });
       }
     }
 
-    // Group endpoints that land on the same vertex (same tolerance as roomDetection).
-    const vertices: End[][] = [];
-    for (const e of ends) {
-      const group = vertices.find((g) => samePoint(g[0].v, e.v));
-      if (group) group.push(e); else vertices.push([e]);
+    const endsPerVertex: WallEnd[][] = [];
+    for (const wallEnd of wallEnds) {
+      const existing = endsPerVertex.find((group) => isSameVertex(group[0].vertex, wallEnd.vertex));
+      if (existing) existing.push(wallEnd); else endsPerVertex.push([wallEnd]);
     }
 
-    // Where the two offset lines meet. `sideA`/`sideB` pick which side of each wall
-    // (+1 = left of dOut) the offset line sits on.
-    function cutPoint(a: End, sideA: number, b: End, sideB: number): { p: Point; exact: boolean } {
-      const nA = { x: -a.dOut.y * sideA, y: a.dOut.x * sideA };
-      const nB = { x: -b.dOut.y * sideB, y: b.dOut.x * sideB };
-      const pA = { x: a.v.x + nA.x * a.r, y: a.v.y + nA.y * a.r };
-      const pB = { x: b.v.x + nB.x * b.r, y: b.v.y + nB.y * b.r };
-      const denom = a.dOut.x * b.dOut.y - a.dOut.y * b.dOut.x;
-
-      if (Math.abs(denom) < 1e-6) {
-        // Parallel offset lines. Anti-parallel means the two walls run straight through
-        // each other, and equal radii make the faces continuous — a flat cut at the
-        // vertex is then exact. Same-direction (overlapping walls) never is.
-        const straightThrough = a.dOut.x * b.dOut.x + a.dOut.y * b.dOut.y < -0.999;
-        return { p: pA, exact: straightThrough && Math.abs(a.r - b.r) < 1e-6 };
-      }
-
-      const t = ((pB.x - pA.x) * b.dOut.y - (pB.y - pA.y) * b.dOut.x) / denom;
-      const p = { x: pA.x + t * a.dOut.x, y: pA.y + t * a.dOut.y };
-      const reach = Math.hypot(p.x - a.v.x, p.y - a.v.y);
-      const limit = Math.max(a.r, b.r) * MITER_LIMIT;
-      if (reach > limit) {
-        // Too acute for a spike: pull the tip back to the limit and keep the cap.
-        const k = limit / reach;
-        return { p: { x: a.v.x + (p.x - a.v.x) * k, y: a.v.y + (p.y - a.v.y) * k }, exact: false };
-      }
-      return { p, exact: true };
-    }
-
-    const result = new Map<string, WallJoin>();
-    const voids: JunctionVoid[] = [];
-    const setEnd = (e: End, entry: WallJoinEnd) => {
-      const existing = result.get(e.wall.id) ?? {
-        start: { uPos: 0, uNeg: 0, capped: true },
-        end: { uPos: e.len, uNeg: e.len, capped: true },
+    // Intersection of the two walls' offset lines, each pushed out to the requested side.
+    function findCut(
+      end: WallEnd, endSide: number,
+      neighbour: WallEnd, neighbourSide: number
+    ): { point: Point; isExact: boolean } {
+      const endNormal = { x: -end.outward.y * endSide, y: end.outward.x * endSide };
+      const neighbourNormal = { x: -neighbour.outward.y * neighbourSide, y: neighbour.outward.x * neighbourSide };
+      const endLineOrigin = {
+        x: end.vertex.x + endNormal.x * end.halfThickness,
+        y: end.vertex.y + endNormal.y * end.halfThickness,
       };
-      if (e.atStart) existing.start = entry; else existing.end = entry;
-      result.set(e.wall.id, existing);
+      const neighbourLineOrigin = {
+        x: neighbour.vertex.x + neighbourNormal.x * neighbour.halfThickness,
+        y: neighbour.vertex.y + neighbourNormal.y * neighbour.halfThickness,
+      };
+      const denominator = end.outward.x * neighbour.outward.y - end.outward.y * neighbour.outward.x;
+
+      if (Math.abs(denominator) < 1e-6) {
+        // Parallel offsets: a flat cut at the vertex is exact only for a collinear run of
+        // equal thickness, never for two walls lying on top of each other.
+        const runsStraightThrough =
+          end.outward.x * neighbour.outward.x + end.outward.y * neighbour.outward.y < -0.999;
+        const sameThickness = Math.abs(end.halfThickness - neighbour.halfThickness) < 1e-6;
+        return { point: endLineOrigin, isExact: runsStraightThrough && sameThickness };
+      }
+
+      const distanceAlongEnd =
+        ((neighbourLineOrigin.x - endLineOrigin.x) * neighbour.outward.y -
+         (neighbourLineOrigin.y - endLineOrigin.y) * neighbour.outward.x) / denominator;
+      const point = {
+        x: endLineOrigin.x + distanceAlongEnd * end.outward.x,
+        y: endLineOrigin.y + distanceAlongEnd * end.outward.y,
+      };
+
+      const reach = Math.hypot(point.x - end.vertex.x, point.y - end.vertex.y);
+      const maxReach = Math.max(end.halfThickness, neighbour.halfThickness) * MITER_LIMIT;
+      if (reach > maxReach) {
+        const pullBack = maxReach / reach;
+        return {
+          point: {
+            x: end.vertex.x + (point.x - end.vertex.x) * pullBack,
+            y: end.vertex.y + (point.y - end.vertex.y) * pullBack,
+          },
+          isExact: false,
+        };
+      }
+      return { point, isExact: true };
+    }
+
+    const joins = new Map<string, WallJoin>();
+    const voids: JunctionVoid[] = [];
+    const recordEnd = (wallEnd: WallEnd, join: WallJoinEnd) => {
+      const existing = joins.get(wallEnd.wall.id) ?? {
+        start: { cutOnPositiveSide: 0, cutOnNegativeSide: 0, capped: true },
+        end: {
+          cutOnPositiveSide: wallEnd.wallLength,
+          cutOnNegativeSide: wallEnd.wallLength,
+          capped: true,
+        },
+      };
+      if (wallEnd.isStartEnd) existing.start = join; else existing.end = join;
+      joins.set(wallEnd.wall.id, existing);
     };
 
-    for (const group of vertices) {
-      const n = group.length;
+    for (const endsHere of endsPerVertex) {
+      const endCount = endsHere.length;
 
-      // A free end stays square.
-      if (n < 2) {
-        const e = group[0];
-        const u = e.atStart ? 0 : e.len;
-        setEnd(e, { uPos: u, uNeg: u, capped: true });
+      if (endCount < 2) {
+        const freeEnd = endsHere[0];
+        const squareCut = freeEnd.isStartEnd ? 0 : freeEnd.wallLength;
+        recordEnd(freeEnd, {
+          cutOnPositiveSide: squareCut, cutOnNegativeSide: squareCut, capped: true,
+        });
         continue;
       }
 
-      group.sort((a, b) => a.angle - b.angle);
+      endsHere.sort((a, b) => a.outwardAngle - b.outwardAngle);
 
-      // Going counter-clockwise, the wedge between an end and its next neighbour is
-      // bounded by that end's left face and the neighbour's right face; mirrored on the
-      // other side. The left cut points, in this same order, are the corners of the
-      // polygon left uncovered in the middle of the junction.
-      const cuts = group.map((e, i) => ({
-        left: cutPoint(e, +1, group[(i + 1) % n], -1),
-        right: cutPoint(e, -1, group[(i - 1 + n) % n], +1),
+      // The wedge counter-clockwise from an end is bounded by that end's left face and the
+      // next neighbour's right face; mirrored clockwise. Those left-hand cuts, in the same
+      // order, are the corners of the polygon left uncovered in the middle.
+      const cuts = endsHere.map((end, i) => ({
+        left: findCut(end, LEFT_OF_OUTWARD, endsHere[(i + 1) % endCount], RIGHT_OF_OUTWARD),
+        right: findCut(end, RIGHT_OF_OUTWARD, endsHere[(i - 1 + endCount) % endCount], LEFT_OF_OUTWARD),
       }));
 
-      // Two walls meet exactly, so there is nothing in the middle to close. Three or more
-      // leave a real void: its sides are the cap faces, but the top is open to the sky.
-      if (n >= 3) {
-        const poly = cuts.map((c) => c.left.p);
-        let area = 0;
-        for (let i = 0; i < n; i++) {
-          const p = poly[i], q = poly[(i + 1) % n];
-          area += p.x * q.y - q.x * p.y;
+      // Two walls meet exactly; three or more leave a void whose sides are the cap faces
+      // but whose top is open.
+      if (endCount >= 3) {
+        const corners = cuts.map((cut) => cut.left.point);
+        let twiceArea = 0;
+        for (let i = 0; i < endCount; i++) {
+          const corner = corners[i];
+          const nextCorner = corners[(i + 1) % endCount];
+          twiceArea += corner.x * nextCorner.y - nextCorner.x * corner.y;
         }
-        if (Math.abs(area) / 2 > 0.5) {
+        if (Math.abs(twiceArea) / 2 > 0.5) {
           voids.push({
-            center: group[0].v,
-            poly,
-            minHeight: Math.min(...group.map((e) => e.wall.height)),
+            vertex: endsHere[0].vertex,
+            corners,
+            lowestWallHeight: Math.min(...endsHere.map((end) => end.wall.height)),
           });
         }
       }
 
-      for (let i = 0; i < n; i++) {
-        const e = group[i];
-        const { left: cutL, right: cutR } = cuts[i];
+      for (let i = 0; i < endCount; i++) {
+        const end = endsHere[i];
+        const { left: leftCut, right: rightCut } = cuts[i];
 
-        const uOf = (p: Point) => (p.x - e.wall.start.x) * e.d.x + (p.y - e.wall.start.y) * e.d.y;
-        // Local +z of the wall mesh is the left normal of start->end, so at the start end
-        // "left of dOut" is the +normal side and at the far end it is the -normal side.
-        let uPos = e.atStart ? uOf(cutL.p) : uOf(cutR.p);
-        let uNeg = e.atStart ? uOf(cutR.p) : uOf(cutL.p);
+        const distanceAlongWall = (p: Point) =>
+          (p.x - end.wall.start.x) * end.alongWall.x + (p.y - end.wall.start.y) * end.alongWall.y;
 
-        // Never let a cut cross the wall's midpoint — a short wall between two thick ones
-        // would otherwise invert.
-        const clampU = (u: number) => (e.atStart ? Math.min(u, e.len / 2) : Math.max(u, e.len / 2));
-        const clamped = { uPos: clampU(uPos), uNeg: clampU(uNeg) };
-        const wasClamped = clamped.uPos !== uPos || clamped.uNeg !== uNeg;
-        uPos = clamped.uPos;
-        uNeg = clamped.uNeg;
+        // Mesh local +z is the left normal of start->end, so left-of-outward is the
+        // +normal side at the start end and the -normal side at the far one.
+        const rawPositive = end.isStartEnd
+          ? distanceAlongWall(leftCut.point) : distanceAlongWall(rightCut.point);
+        const rawNegative = end.isStartEnd
+          ? distanceAlongWall(rightCut.point) : distanceAlongWall(leftCut.point);
 
-        // The cap can only go when the join is exact on both sides and the neighbour is
-        // tall enough to close the whole opening. At degree 3+ the caps are the sides of
-        // the central void, so they always stay.
+        // A cut past the midpoint would invert a short wall between two thick ones.
+        const clampToOwnHalf = (cut: number) =>
+          end.isStartEnd ? Math.min(cut, end.wallLength / 2) : Math.max(cut, end.wallLength / 2);
+        const cutOnPositiveSide = clampToOwnHalf(rawPositive);
+        const cutOnNegativeSide = clampToOwnHalf(rawNegative);
+        const wasClamped = cutOnPositiveSide !== rawPositive || cutOnNegativeSide !== rawNegative;
+
+        // The cap only goes when the join is exact and the neighbour is tall enough to
+        // close the opening; with three or more walls it is a side of the void, so it stays.
         let capped = true;
-        if (n === 2 && cutL.exact && cutR.exact && !wasClamped) {
-          const other = group[(i + 1) % 2];
-          capped = e.wall.height > other.wall.height;
+        if (endCount === 2 && leftCut.isExact && rightCut.isExact && !wasClamped) {
+          const otherEnd = endsHere[(i + 1) % 2];
+          capped = end.wall.height > otherEnd.wall.height;
         }
 
-        setEnd(e, { uPos, uNeg, capped });
+        recordEnd(end, { cutOnPositiveSide, cutOnNegativeSide, capped });
       }
     }
 
-    return { joins: result, voids };
+    return { joins, voids };
   }
 
   // Flat lid over a junction void. The polygon is star-shaped around the shared vertex by
-  // construction, so a fan from that vertex triangulates it without a general tesselator.
-  function buildJunctionLidGeometry(v: JunctionVoid, y: number): THREE.BufferGeometry {
+  // construction, so a fan from that vertex needs no general tesselator.
+  function buildJunctionLidGeometry(junction: JunctionVoid, atHeight: number): THREE.BufferGeometry {
     const positions: number[] = [];
-    const n = v.poly.length;
-    for (let i = 0; i < n; i++) {
-      const a = v.poly[i];
-      const b = v.poly[(i + 1) % n];
+    const cornerCount = junction.corners.length;
+    for (let i = 0; i < cornerCount; i++) {
+      const corner = junction.corners[i];
+      const nextCorner = junction.corners[(i + 1) % cornerCount];
       // Wind each triangle so the face points up; plan y maps to world z.
-      const up = (a.x - v.center.x) * (b.y - v.center.y) - (a.y - v.center.y) * (b.x - v.center.x) < 0;
-      const p = up ? [v.center, a, b] : [v.center, b, a];
-      for (const q of p) positions.push(q.x, y, q.y);
+      const facesUp =
+        (corner.x - junction.vertex.x) * (nextCorner.y - junction.vertex.y) -
+        (corner.y - junction.vertex.y) * (nextCorner.x - junction.vertex.x) < 0;
+      const triangle = facesUp
+        ? [junction.vertex, corner, nextCorner]
+        : [junction.vertex, nextCorner, corner];
+      for (const p of triangle) positions.push(p.x, atHeight, p.y);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(positions.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
-    return geo;
+
+    const geometry = new THREE.BufferGeometry();
+    const upwardNormals = positions.map((_, i) => (i % 3 === 1 ? 1 : 0));
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(upwardNormals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((positions.length / 3) * 2).fill(0), 2));
+    return geometry;
   }
 
   // Wall prism with mitered (angled) start/end cross-sections. skipStartCap/skipEndCap
@@ -1551,10 +1583,10 @@
         const segU1 = seg.offsetX + seg.width / 2;
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? join.start.uPos : segU0;
-        const u0Neg = touchesStart ? join.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? join.end.uPos : segU1;
-        const u1Neg = touchesEnd ? join.end.uNeg : segU1;
+        const u0Pos = touchesStart ? join.start.cutOnPositiveSide : segU0;
+        const u0Neg = touchesStart ? join.start.cutOnNegativeSide : segU0;
+        const u1Pos = touchesEnd ? join.end.cutOnPositiveSide : segU1;
+        const u1Neg = touchesEnd ? join.end.cutOnNegativeSide : segU1;
         const mid = (segU0 + segU1) / 2;
         const skipStartCap = touchesStart && !join.start.capped;
         const skipEndCap = touchesEnd && !join.end.capped;
@@ -1584,10 +1616,10 @@
       const addBaseboardSegment = (segU0: number, segU1: number) => {
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? bbJoin.start.uPos : segU0;
-        const u0Neg = touchesStart ? bbJoin.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? bbJoin.end.uPos : segU1;
-        const u1Neg = touchesEnd ? bbJoin.end.uNeg : segU1;
+        const u0Pos = touchesStart ? bbJoin.start.cutOnPositiveSide : segU0;
+        const u0Neg = touchesStart ? bbJoin.start.cutOnNegativeSide : segU0;
+        const u1Pos = touchesEnd ? bbJoin.end.cutOnPositiveSide : segU1;
+        const u1Neg = touchesEnd ? bbJoin.end.cutOnNegativeSide : segU1;
         const mid = (segU0 + segU1) / 2;
         const skipStartCap = touchesStart && !bbJoin.start.capped;
         const skipEndCap = touchesEnd && !bbJoin.end.capped;
@@ -1619,14 +1651,14 @@
 
     // Lids over the voids left in the middle of T- and X-junctions. Without these the
     // pocket between the mitered ends is open at the top and reads as a dark notch.
-    const addLid = (v: JunctionVoid, y: number, mat: THREE.Material) => {
-      const lid = new THREE.Mesh(buildJunctionLidGeometry(v, y), mat);
+    const addLid = (junction: JunctionVoid, atHeight: number, material: THREE.Material) => {
+      const lid = new THREE.Mesh(buildJunctionLidGeometry(junction, atHeight), material);
       lid.castShadow = true;
       lid.receiveShadow = true;
       wallGroup.add(lid);
     };
-    for (const v of wallVoids) addLid(v, v.minHeight, defaultInteriorMat);
-    for (const v of baseboardVoids) addLid(v, BASEBOARD_HEIGHT, baseboardMat);
+    for (const junction of wallVoids) addLid(junction, junction.lowestWallHeight, defaultInteriorMat);
+    for (const junction of baseboardVoids) addLid(junction, BASEBOARD_HEIGHT, baseboardMat);
 
     // Doors
     for (const door of floor.doors) {
@@ -2070,10 +2102,10 @@
         const segU1 = seg.offsetX + seg.width / 2;
         const touchesStart = segU0 <= WALL_JOIN_EPS;
         const touchesEnd = segU1 >= len - WALL_JOIN_EPS;
-        const u0Pos = touchesStart ? join.start.uPos : segU0;
-        const u0Neg = touchesStart ? join.start.uNeg : segU0;
-        const u1Pos = touchesEnd ? join.end.uPos : segU1;
-        const u1Neg = touchesEnd ? join.end.uNeg : segU1;
+        const u0Pos = touchesStart ? join.start.cutOnPositiveSide : segU0;
+        const u0Neg = touchesStart ? join.start.cutOnNegativeSide : segU0;
+        const u1Pos = touchesEnd ? join.end.cutOnPositiveSide : segU1;
+        const u1Neg = touchesEnd ? join.end.cutOnNegativeSide : segU1;
         const mid = (segU0 + segU1) / 2;
         const skipStartCap = touchesStart && !join.start.capped;
         const skipEndCap = touchesEnd && !join.end.capped;
@@ -2093,8 +2125,8 @@
       }
     }
 
-    for (const v of wallVoids) {
-      const lid = new THREE.Mesh(buildJunctionLidGeometry(v, v.minHeight + yOffset), defaultInteriorMat);
+    for (const junction of wallVoids) {
+      const lid = new THREE.Mesh(buildJunctionLidGeometry(junction, junction.lowestWallHeight + yOffset), defaultInteriorMat);
       group.add(lid);
     }
 
