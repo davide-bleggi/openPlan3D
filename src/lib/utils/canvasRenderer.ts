@@ -144,6 +144,30 @@ export function drawGrid(
 
 // ── Wall drawing ─────────────────────────────────────────────────────
 
+/**
+ * Fill + stroke the current path as a wall body. Hidden walls (terrace and
+ * balcony perimeters) are drawn as a dashed ghost outline instead of a solid
+ * wall so they stay visible to edit while reading as "not built".
+ */
+function paintWallBody(ctx: CanvasRenderingContext2D, w: Wall, selected: boolean): void {
+  if (w.hidden) {
+    ctx.save();
+    ctx.fillStyle = selected ? 'rgba(147, 197, 253, 0.35)' : 'rgba(156, 163, 175, 0.15)';
+    ctx.strokeStyle = selected ? '#3b82f6' : '#9ca3af';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  ctx.fillStyle = selected ? '#93c5fd' : '#404040';
+  ctx.strokeStyle = selected ? '#3b82f6' : '#333333';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+}
+
 export function drawWall(
   cs: CanvasState,
   w: Wall,
@@ -177,16 +201,12 @@ export function drawWall(
       innerPts.push({ x: px - nx, y: py - ny });
     }
 
-    ctx.fillStyle = selected ? '#93c5fd' : '#404040';
-    ctx.strokeStyle = selected ? '#3b82f6' : '#333333';
-    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(outerPts[0].x, outerPts[0].y);
     for (let i = 1; i < outerPts.length; i++) ctx.lineTo(outerPts[i].x, outerPts[i].y);
     for (let i = innerPts.length - 1; i >= 0; i--) ctx.lineTo(innerPts[i].x, innerPts[i].y);
     ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+    paintWallBody(ctx, w, selected);
 
     const wlen = wallLength(w);
     if (wlen >= 10 && showDimensions && dimSettings.showExternalDimensions) {
@@ -247,20 +267,16 @@ export function drawWall(
   const nx = (-dy / len) * thickness / 2;
   const ny = (dx / len) * thickness / 2;
 
-  ctx.fillStyle = selected ? '#93c5fd' : '#404040';
-  ctx.strokeStyle = selected ? '#3b82f6' : '#333333';
-  ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(s.x + nx, s.y + ny);
   ctx.lineTo(e.x + nx, e.y + ny);
   ctx.lineTo(e.x - nx, e.y - ny);
   ctx.lineTo(s.x - nx, s.y - ny);
   ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  paintWallBody(ctx, w, selected);
 
-  // Wall texture pattern overlay
-  if (w.texture) {
+  // Wall texture pattern overlay (hidden walls show no material)
+  if (w.texture && !w.hidden) {
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(s.x + nx, s.y + ny);
@@ -1529,6 +1545,7 @@ export function drawWallJoints(cs: CanvasState, floor: Floor, selId: string | nu
   const { ctx, zoom } = cs;
   const epMap = new Map<string, { x: number; y: number; thickness: number; selected: boolean }[]>();
   for (const w of floor.walls) {
+    if (w.hidden) continue; // no solid corner blob where a hidden wall meets another
     const sel = w.id === selId;
     for (const ep of [w.start, w.end]) {
       const key = `${Math.round(ep.x)},${Math.round(ep.y)}`;
@@ -1597,11 +1614,12 @@ export function drawMinimap(
     return { x: ox + (wx - bbox!.minX) * scale, y: oy + (wy - bbox!.minY) * scale };
   }
 
-  mctx.strokeStyle = '#555';
   mctx.lineWidth = Math.max(1, 2 * scale);
   for (const w of floor.walls) {
     const s = toMini(w.start.x, w.start.y);
     const e = toMini(w.end.x, w.end.y);
+    mctx.strokeStyle = w.hidden ? '#aaa' : '#555';
+    mctx.setLineDash(w.hidden ? [3, 3] : []);
     mctx.beginPath();
     if (w.curvePoint) {
       const cp = toMini(w.curvePoint.x, w.curvePoint.y);
@@ -1611,6 +1629,7 @@ export function drawMinimap(
     }
     mctx.stroke();
   }
+  mctx.setLineDash([]);
 
   for (const fi of floor.furniture) {
     const cat = getCatalogItem(fi.catalogId);

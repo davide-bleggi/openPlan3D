@@ -9,6 +9,13 @@ export interface Wall {
   color: string;
   /** Optional quadratic bezier control point for curved walls */
   curvePoint?: Point;
+  /**
+   * When true the wall is not rendered as a solid wall: it is skipped in 3D and
+   * drawn as a dashed outline in the plan. The wall still exists structurally —
+   * it bounds rooms, carries dimensions and can host doors/windows. Used for
+   * terrace and balcony perimeters that only have railings.
+   */
+  hidden?: boolean;
   texture?: string;
   /** Interior-specific overrides (if different from exterior) */
   interiorColor?: string;

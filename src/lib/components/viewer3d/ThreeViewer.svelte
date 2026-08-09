@@ -1426,6 +1426,9 @@
       computeWallJoins(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
 
     for (const wall of floor.walls) {
+      // Hidden walls (terrace/balcony perimeters) are structural only — no geometry
+      if (wall.hidden) continue;
+
       // Resolve per-side materials: interior and exterior can have independent color/texture
       const DEFAULT_2D_COLORS = ['#cccccc', '#888888', '#444444', '#404040'];
       const wLen = Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y);
@@ -1631,7 +1634,7 @@
     // Doors
     for (const door of floor.doors) {
       const wall = floor.walls.find((w) => w.id === door.wallId);
-      if (!wall) continue;
+      if (!wall || wall.hidden) continue;
       const t = door.position;
       const px = wall.start.x + (wall.end.x - wall.start.x) * t;
       const py = wall.start.y + (wall.end.y - wall.start.y) * t;
@@ -1731,7 +1734,7 @@
     // Windows
     for (const win of floor.windows) {
       const wall = floor.walls.find((w) => w.id === win.wallId);
-      if (!wall) continue;
+      if (!wall || wall.hidden) continue;
       const t = win.position;
       const px = wall.start.x + (wall.end.x - wall.start.x) * t;
       const py = wall.start.y + (wall.end.y - wall.start.y) * t;
@@ -1934,7 +1937,11 @@
       sprite.scale.set(150, 40, 1);
       wallGroup.add(sprite);
 
-      // Ceiling — render at wall height, visible from below
+      // Ceiling — render at wall height, visible from below. A space with any
+      // hidden wall on its perimeter (terrace, balcony) is open to the sky, so
+      // it gets no ceiling slab.
+      if (room.walls.some((id) => floor.walls.find((w) => w.id === id)?.hidden)) continue;
+
       const defaultWallH = floor.walls.length > 0 ? floor.walls[0].height : 260;
       const ceilMat = new THREE.MeshStandardMaterial({
         color: 0xf5f5f0,
@@ -2041,6 +2048,7 @@
     const { joins: wallJoins, voids: wallVoids } = computeWallJoins(floor.walls);
 
     for (const wall of floor.walls) {
+      if (wall.hidden) continue;
       const dx = wall.end.x - wall.start.x;
       const dy = wall.end.y - wall.start.y;
       const len = Math.hypot(dx, dy);

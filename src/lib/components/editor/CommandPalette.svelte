@@ -1,6 +1,6 @@
 <script lang="ts">
   import { furnitureCatalog } from '$lib/utils/furnitureCatalog';
-  import { selectedTool, snapEnabled, placingFurnitureId, undo, redo, currentProject, viewMode } from '$lib/stores/project';
+  import { selectedTool, snapEnabled, placingFurnitureId, undo, redo, currentProject, viewMode, activeFloor, selectedElementId, selectedElementIds, setWallsHidden } from '$lib/stores/project';
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
   import { exportDXF } from '$lib/utils/cadExport';
   import { get } from 'svelte/store';
@@ -49,7 +49,18 @@
     { id: 'a-settings', name: 'Settings', icon: '⚡', category: 'action', categoryLabel: '⚡ Action', action: () => { window.dispatchEvent(new CustomEvent('open-settings')); } },
     { id: 'a-new-project', name: 'New Project', icon: '⚡', category: 'action', categoryLabel: '⚡ Action', action: () => goto(base || '/') },
     { id: 'a-toggle-3d', name: 'Toggle 2D/3D', icon: '⚡', category: 'action', categoryLabel: '⚡ Action', action: () => { viewMode.update(m => m === '2d' ? '3d' : '2d'); } },
+    { id: 'a-hide-walls', name: 'Hide Selected Walls (terrace/balcony)', icon: '⚡', category: 'action', categoryLabel: '⚡ Action', action: () => setWallsHidden(selectedWallIds(), true) },
+    { id: 'a-show-walls', name: 'Show Selected Walls', icon: '⚡', category: 'action', categoryLabel: '⚡ Action', action: () => setWallsHidden(selectedWallIds(), false) },
   ];
+
+  /** Wall ids in the current selection (multi-select, falling back to the single selection) */
+  function selectedWallIds(): string[] {
+    const floor = get(activeFloor);
+    if (!floor) return [];
+    const multi = get(selectedElementIds);
+    const ids = multi.size > 0 ? multi : new Set([get(selectedElementId)].filter(Boolean) as string[]);
+    return floor.walls.filter(w => ids.has(w.id)).map(w => w.id);
+  }
 
   const furnitureItems: ResultItem[] = furnitureCatalog.map(f => ({
     id: `f-${f.id}`,
