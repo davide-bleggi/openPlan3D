@@ -215,6 +215,20 @@
   .ctx-danger:hover {
     background: #fef2f2;
   }
+  /* Dark mode: the panel is repainted dark by the global .bg-white override,
+     so the item colors have to follow or the labels become unreadable. */
+  :global(html.dark) .ctx-item {
+    color: #e5e7eb;
+  }
+  :global(html.dark) .ctx-item:hover {
+    background: #374151;
+  }
+  :global(html.dark) .ctx-danger {
+    color: #f87171;
+  }
+  :global(html.dark) .ctx-danger:hover {
+    background: #451a1a;
+  }
   .ctx-icon {
     width: 18px;
     text-align: center;
@@ -224,5 +238,8 @@
     height: 1px;
     background: #e5e7eb;
     margin: 4px 0;
+  }
+  :global(html.dark) .ctx-sep {
+    background: #374151;
   }
 </style>
