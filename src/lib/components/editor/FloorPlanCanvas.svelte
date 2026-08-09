@@ -4112,7 +4112,7 @@
     targetWall={ctxMenuWall}
     targetFurniture={ctxMenuFurniture}
     targetRoom={ctxMenuRoom}
-    selectedWallCount={selectedWallIds.length}
+    selectedWalls={selectedWalls}
     clipboard={clipboard}
     onclose={() => { ctxMenuVisible = false; }}
     onaction={handleContextMenuAction}
