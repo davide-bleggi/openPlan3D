@@ -17,6 +17,7 @@
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
+  import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer;
@@ -49,7 +50,6 @@
   let wallsTransparent = $state(false);
   // Multi-floor stacking
   let showAllFloors = $state(false);
-  const FLOOR_HEIGHT = 300; // cm — wall height + slab thickness
 
   // Walkthrough mode
   let walkthroughMode = $state(false);
@@ -1676,35 +1676,30 @@
     const project = get(currentProject);
     if (!project || project.floors.length === 0) return;
     
-    // Use buildWalls for the active floor first (it clears wallGroup)
+    // Stack order and Y offsets come from the floors' levels and their own
+    // heights, so floors never land on top of each other.
+    const stack = computeFloorElevations(project.floors);
     const activeF = project.floors.find(f => f.id === project.activeFloorId) ?? project.floors[0];
+    const activeEntry = stack.find(e => e.floor.id === activeF.id)!;
+
+    // The active floor is built full-detail by buildWalls, which clears
+    // wallGroup and places everything at Y=0. Lift it to its elevation now,
+    // while wallGroup holds nothing else — shifting it after the other floors
+    // were merged in would drag them up to the same height.
     buildWalls(activeF);
-    
-    // Now add other floors at Y offsets
-    for (let i = 0; i < project.floors.length; i++) {
-      const floor = project.floors[i];
-      if (floor.id === activeF.id) {
-        // Active floor is already built at Y=0, move it to its correct offset
-        // We need to offset all current wallGroup children
-        const yOffset = i * FLOOR_HEIGHT;
-        if (yOffset !== 0) {
-          // Move existing children up
-          for (const child of [...wallGroup.children]) {
-            child.position.y += yOffset;
-          }
-        }
-        // Add floor label
-        addFloorLabel(i, floor.name || (i === 0 ? 'Ground Floor' : `Floor ${i}`), i * FLOOR_HEIGHT);
-        continue;
+    if (activeEntry.elevation !== 0) {
+      for (const child of wallGroup.children) {
+        child.position.y += activeEntry.elevation;
       }
-      
-      // Build non-active floor into a temporary group, then merge with transparency
+    }
+
+    // Now add the remaining floors at their own offsets, semi-transparent.
+    for (const entry of stack) {
+      if (entry.floor.id === activeF.id) continue;
+
       const tempGroup = new THREE.Group();
-      buildFloorIntoGroup(floor, tempGroup, i * FLOOR_HEIGHT, 0.35);
-      
-      // Add floor label
-      addFloorLabel(i, floor.name || (i === 0 ? 'Ground Floor' : `Floor ${i}`), i * FLOOR_HEIGHT);
-      
+      buildFloorIntoGroup(entry.floor, tempGroup, entry.elevation, 0.35);
+
       // Move children from temp group to wallGroup
       while (tempGroup.children.length > 0) {
         const child = tempGroup.children[0];
@@ -1712,12 +1707,23 @@
         wallGroup.add(child);
       }
     }
-    
+
+    // Labels go last, off one bounding box of the finished building, so they
+    // line up in a column instead of drifting as each floor was added.
+    const box = new THREE.Box3().setFromObject(wallGroup);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const labelX = center.x - size.x / 2 - 200;
+    for (const entry of stack) {
+      const name = entry.floor.name || defaultFloorName(entry.floor, entry.index);
+      addFloorLabel(name, entry.elevation + entry.height / 2, labelX, center.z);
+    }
+
     // Re-center camera to encompass all floors
-    autoCenterCameraAllFloors(project.floors.length);
+    autoCenterCameraAllFloors();
   }
-  
-  function addFloorLabel(floorIndex: number, name: string, yOffset: number) {
+
+  function addFloorLabel(name: string, y: number, x: number, z: number) {
     const canvas = document.createElement('canvas');
     canvas.width = 256; canvas.height = 48;
     const ctx = canvas.getContext('2d')!;
@@ -1734,10 +1740,7 @@
     const sprite = new THREE.Sprite(spriteMat);
     
     // Position label to the side of the building
-    const box = new THREE.Box3().setFromObject(wallGroup);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    sprite.position.set(center.x - size.x / 2 - 200, yOffset + 130, center.z);
+    sprite.position.set(x, y, z);
     sprite.scale.set(200, 40, 1);
     wallGroup.add(sprite);
   }
@@ -1828,7 +1831,7 @@
     }
   }
   
-  function autoCenterCameraAllFloors(floorCount: number) {
+  function autoCenterCameraAllFloors() {
     const box = new THREE.Box3().setFromObject(wallGroup);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());

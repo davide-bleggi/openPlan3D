@@ -560,7 +560,9 @@ export function addFloor(name?: string, copyCurrentLayout = false) {
   const p = get(currentProject);
   if (!p) return;
   snapshot('Added floor');
-  const level = p.floors.length;
+  // One above the highest existing level — floors.length would reuse a level
+  // after a middle floor was removed, stacking two floors at the same height.
+  const level = p.floors.reduce((max, f) => Math.max(max, f.level ?? 0), -1) + 1;
   const floor: Floor = { id: uid(), name: name ?? `Floor ${level}`, level, walls: [], rooms: [], doors: [], windows: [], furniture: [], stairs: [], columns: [], guides: [], measurements: [], annotations: [], textAnnotations: [], groups: [] };
   if (copyCurrentLayout) {
     const cur = p.floors.find(f => f.id === p.activeFloorId);
