@@ -12,7 +12,7 @@ import type { Floor } from '$lib/models/types';
 /** Wall height assumed for a floor that has no walls yet. */
 export const DEFAULT_WALL_HEIGHT = 260;
 /** Structural depth between a floor's wall tops and the slab above it. */
-export const FLOOR_SLAB_THICKNESS = 40;
+export const FLOOR_SLAB_THICKNESS = 0;
 
 export interface FloorElevation {
   floor: Floor;
@@ -46,8 +46,8 @@ export function computeFloorElevations(floors: Floor[]): FloorElevation[] {
   let cursor = 0;
   const stack: FloorElevation[] = ordered.map((floor, index) => {
     const height = floorStructuralHeight(floor);
-    const entry: FloorElevation = { floor, index, height, elevation: cursor };
     cursor += height;
+    const entry: FloorElevation = { floor, index, height, elevation: cursor };
     return entry;
   });
 
