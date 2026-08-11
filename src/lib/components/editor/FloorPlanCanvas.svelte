@@ -16,6 +16,7 @@
   import type { CanvasState } from '$lib/utils/canvasInteraction';
   import { drawWall as _drawWall, drawDoorOnWall as _drawDoorOnWall, drawWindowOnWall as _drawWindowOnWall, drawDoorDistanceDimensions as _drawDoorDistanceDimensions, drawWindowDistanceDimensions as _drawWindowDistanceDimensions, drawFurnitureItem, drawStair as _drawStair, drawColumn as _drawColumn, drawGuides as _drawGuides, drawPersistedMeasurements as _drawPersistedMeasurements, drawTextAnnotations as _drawTextAnnotations, drawAnnotation as _drawAnnotation, drawAnnotations as _drawAnnotations, drawRooms as _drawRooms, drawWallJoints as _drawWallJoints, drawSnapPoints as _drawSnapPoints, drawMinimap as _drawMinimap, drawEntourageItems as _drawEntourageItems, drawEntourageGhost as _drawEntourageGhost, entourageAspect } from '$lib/utils/canvasRenderer';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
+  import { stairFootprint } from '$lib/utils/stairGeometry';
   import { pointInPolygon, positionOnWall, findWallAt as _findWallAt, findHandleAt as _findHandleAt, findFurnitureAt as _findFurnitureAt, findColumnAt as _findColumnAt, findStairAt as _findStairAt, findDoorAt as _findDoorAt, findWindowAt as _findWindowAt, findRoomAt as _findRoomAt, hitTestMeasurement as _hitTestMeasurement, hitTestAnnotation as _hitTestAnnotation, hitTestTextAnnotation as _hitTestTextAnnotation, findEntourageAt } from '$lib/utils/hitTesting';
 
   let canvas: HTMLCanvasElement;
@@ -1846,7 +1847,7 @@
     function expand(x: number, y: number) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; found = true; }
     for (const w of currentFloor.walls) { expand(w.start.x, w.start.y); expand(w.end.x, w.end.y); if (w.curvePoint) expand(w.curvePoint.x, w.curvePoint.y); }
     for (const fi of currentFloor.furniture) { const cat = getCatalogItem(fi.catalogId); if (!cat) continue; const r = Math.hypot((fi.width ?? cat.width) / 2, (fi.depth ?? cat.depth) / 2); expand(fi.position.x - r, fi.position.y - r); expand(fi.position.x + r, fi.position.y + r); }
-    if (currentFloor.stairs) for (const st of currentFloor.stairs) { expand(st.position.x - st.width / 2, st.position.y - st.depth / 2); expand(st.position.x + st.width / 2, st.position.y + st.depth / 2); }
+    if (currentFloor.stairs) for (const st of currentFloor.stairs) { const fp = stairFootprint(st); expand(st.position.x - fp.width / 2, st.position.y - fp.depth / 2); expand(st.position.x + fp.width / 2, st.position.y + fp.depth / 2); }
     if (currentFloor.columns) for (const col of currentFloor.columns) { const r = col.diameter / 2; expand(col.position.x - r, col.position.y - r); expand(col.position.x + r, col.position.y + r); }
     if (!found) return null;
     const pad = 50;
@@ -1918,8 +1919,9 @@
     // Stairs
     if (currentFloor.stairs) {
       for (const st of currentFloor.stairs) {
-        expand(st.position.x - st.width / 2, st.position.y - st.depth / 2);
-        expand(st.position.x + st.width / 2, st.position.y + st.depth / 2);
+        const fp = stairFootprint(st);
+        expand(st.position.x - fp.width / 2, st.position.y - fp.depth / 2);
+        expand(st.position.x + fp.width / 2, st.position.y + fp.depth / 2);
       }
     }
     // Columns

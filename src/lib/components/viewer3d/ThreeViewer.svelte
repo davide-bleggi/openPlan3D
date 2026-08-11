@@ -17,6 +17,14 @@
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
+  import {
+    buildStairLayout,
+    flightCrossCenter,
+    flightCrossWidth,
+    flightStartCoord,
+    flightTreadDepth,
+    type StairFlight
+  } from '$lib/utils/stairGeometry';
   import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
 
   let container: HTMLDivElement;
@@ -996,19 +1004,39 @@
     return tex;
   }
 
-  function buildStraightStairRun(group: THREE.Group, mat: THREE.MeshStandardMaterial, sideMat: THREE.MeshStandardMaterial, width: number, depth: number, riserCount: number, riserHeight: number, offsetX: number, offsetY: number, offsetZ: number) {
-    const treadDepth = depth / riserCount;
-    for (let i = 0; i < riserCount; i++) {
-      const treadGeo = new THREE.BoxGeometry(width, 3, treadDepth);
+  /**
+   * Build one flight of a stair from its layout rectangle. Local layout x maps
+   * to world x and layout y maps to world z, so no group rotation is needed.
+   */
+  function buildStairFlight(group: THREE.Group, mat: THREE.MeshStandardMaterial, sideMat: THREE.MeshStandardMaterial, flight: StairFlight, riserHeight: number, slabThickness: number) {
+    const treadDepth = flightTreadDepth(flight);
+    const start = flightStartCoord(flight);
+    const cross = flightCrossCenter(flight);
+    const crossWidth = flightCrossWidth(flight);
+    const alongX = flight.axis === 'x';
+
+    for (let i = 0; i < flight.riserCount; i++) {
+      const stepIndex = flight.startRiser + i;
+      // Tread: sits at the top of its riser, spanning one tread depth.
+      const treadAlong = start + flight.dir * (i + 0.5) * treadDepth;
+      const treadGeo = alongX
+        ? new THREE.BoxGeometry(treadDepth, slabThickness, crossWidth)
+        : new THREE.BoxGeometry(crossWidth, slabThickness, treadDepth);
       const tread = new THREE.Mesh(treadGeo, mat);
-      tread.position.set(offsetX, offsetY + (i + 1) * riserHeight - 1.5, offsetZ + i * treadDepth + treadDepth / 2);
+      const treadY = (stepIndex + 1) * riserHeight - slabThickness / 2;
+      tread.position.set(alongX ? treadAlong : cross, treadY, alongX ? cross : treadAlong);
       tread.castShadow = true;
       tread.receiveShadow = true;
       group.add(tread);
 
-      const riserGeo = new THREE.BoxGeometry(width, riserHeight, 2);
+      // Riser: the vertical face at the leading edge of the tread.
+      const riserAlong = start + flight.dir * i * treadDepth;
+      const riserGeo = alongX
+        ? new THREE.BoxGeometry(2, riserHeight, crossWidth)
+        : new THREE.BoxGeometry(crossWidth, riserHeight, 2);
       const riser = new THREE.Mesh(riserGeo, sideMat);
-      riser.position.set(offsetX, offsetY + i * riserHeight + riserHeight / 2, offsetZ + i * treadDepth);
+      const riserY = stepIndex * riserHeight + riserHeight / 2;
+      riser.position.set(alongX ? riserAlong : cross, riserY, alongX ? cross : riserAlong);
       riser.castShadow = true;
       group.add(riser);
     }
@@ -1017,87 +1045,41 @@
   function buildStairs(floor: Floor) {
     if (!floor.stairs) return;
     for (const stair of floor.stairs) {
-      const totalHeight = 260; // standard floor height
-      const riserHeight = totalHeight / stair.riserCount;
+      const layout = buildStairLayout(stair);
       const mat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7 });
       const sideMat = new THREE.MeshStandardMaterial({ color: 0xb8956a, roughness: 0.8 });
-      const type = stair.stairType || 'straight';
-      
+
       const stairGroup = new THREE.Group();
-      
-      if (type === 'straight') {
-        buildStraightStairRun(stairGroup, mat, sideMat, stair.width, stair.depth, stair.riserCount, riserHeight, 0, 0, -stair.depth / 2);
 
-      } else if (type === 'l-shaped') {
-        const halfRisers = Math.floor(stair.riserCount / 2);
-        const run2Risers = stair.riserCount - halfRisers;
-        const run1Depth = stair.depth / 2;
-        // First run (along Z)
-        buildStraightStairRun(stairGroup, mat, sideMat, stair.width, run1Depth, halfRisers, riserHeight, 0, 0, 0);
-        // Landing platform
-        const landingY = halfRisers * riserHeight;
-        const landGeo = new THREE.BoxGeometry(stair.width, 3, stair.width / 2);
-        const landing = new THREE.Mesh(landGeo, mat);
-        landing.position.set(0, landingY, -stair.width / 4);
-        landing.castShadow = true;
-        landing.receiveShadow = true;
-        stairGroup.add(landing);
-        // Second run (along X, turning right)
-        const run2Depth = stair.depth / 2;
-        const run2Group = new THREE.Group();
-        buildStraightStairRun(run2Group, mat, sideMat, stair.width, run2Depth, run2Risers, riserHeight, 0, 0, 0);
-        run2Group.rotation.y = -Math.PI / 2;
-        run2Group.position.set(stair.width / 2 + run2Depth / 2, landingY, -stair.width / 2);
-        stairGroup.add(run2Group);
-
-      } else if (type === 'u-shaped') {
-        const halfRisers = Math.floor(stair.riserCount / 2);
-        const run2Risers = stair.riserCount - halfRisers;
-        const runW = stair.width * 0.425;
-        // First run up
-        buildStraightStairRun(stairGroup, mat, sideMat, runW, stair.depth, halfRisers, riserHeight, -stair.width / 2 + runW / 2, 0, -stair.depth / 2);
-        // Landing at top
-        const landingY = halfRisers * riserHeight;
-        const landGeo = new THREE.BoxGeometry(stair.width, 3, runW);
-        const landing = new THREE.Mesh(landGeo, mat);
-        landing.position.set(0, landingY, -stair.depth / 2 + runW / 2 - 10);
-        landing.castShadow = true;
-        stairGroup.add(landing);
-        // Second run down (reversed direction)
-        const run2Group = new THREE.Group();
-        buildStraightStairRun(run2Group, mat, sideMat, runW, stair.depth, run2Risers, riserHeight, 0, 0, -stair.depth / 2);
-        run2Group.rotation.y = Math.PI;
-        run2Group.position.set(stair.width / 2 - runW / 2, landingY, 0);
-        stairGroup.add(run2Group);
-
-      } else if (type === 'spiral') {
-        const radius = Math.min(stair.width, stair.depth) / 2;
-        const postR = radius * 0.1;
-        const totalAngle = Math.PI * 1.75;
+      if (layout.type === 'spiral') {
+        const { radius, postRadius, totalAngle, startAngle, riserCount, riserHeight, totalRise, slabThickness } = layout;
         // Center post
-        const postGeo = new THREE.CylinderGeometry(postR, postR, totalHeight, 8);
+        const postGeo = new THREE.CylinderGeometry(postRadius, postRadius, totalRise, 8);
         const post = new THREE.Mesh(postGeo, sideMat);
-        post.position.set(0, totalHeight / 2, 0);
+        post.position.set(0, totalRise / 2, 0);
         post.castShadow = true;
         stairGroup.add(post);
         // Spiral treads as wedge-shaped steps
-        for (let i = 0; i < stair.riserCount; i++) {
-          const angle = (i / stair.riserCount) * totalAngle;
-          const nextAngle = ((i + 1) / stair.riserCount) * totalAngle;
+        for (let i = 0; i < riserCount; i++) {
+          const angle = startAngle + (i / riserCount) * totalAngle;
+          const nextAngle = startAngle + ((i + 1) / riserCount) * totalAngle;
           const y = (i + 1) * riserHeight;
           // Create wedge shape using ExtrudeGeometry
+          // The extruded shape is laid flat with rotation.x = -PI/2, which maps
+          // shape y to world -z; negate the sines so the winding matches the
+          // 2D plan view (canvas y = world z).
           const shape = new THREE.Shape();
-          shape.moveTo(postR * Math.cos(angle), postR * Math.sin(angle));
-          shape.lineTo(radius * Math.cos(angle), radius * Math.sin(angle));
+          shape.moveTo(postRadius * Math.cos(angle), -postRadius * Math.sin(angle));
+          shape.lineTo(radius * Math.cos(angle), -radius * Math.sin(angle));
           // Arc outer edge
           const arcSteps = 4;
           for (let j = 1; j <= arcSteps; j++) {
             const a = angle + (nextAngle - angle) * (j / arcSteps);
-            shape.lineTo(radius * Math.cos(a), radius * Math.sin(a));
+            shape.lineTo(radius * Math.cos(a), -radius * Math.sin(a));
           }
-          shape.lineTo(postR * Math.cos(nextAngle), postR * Math.sin(nextAngle));
+          shape.lineTo(postRadius * Math.cos(nextAngle), -postRadius * Math.sin(nextAngle));
           shape.closePath();
-          const extrudeSettings = { depth: 3, bevelEnabled: false };
+          const extrudeSettings = { depth: slabThickness, bevelEnabled: false };
           const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
           const tread = new THREE.Mesh(geo, mat);
           tread.rotation.x = -Math.PI / 2;
@@ -1106,13 +1088,31 @@
           tread.receiveShadow = true;
           stairGroup.add(tread);
         }
+      } else {
+        for (const flight of layout.flights) {
+          buildStairFlight(stairGroup, mat, sideMat, flight, layout.riserHeight, layout.slabThickness);
+        }
+        // Landings sit flush with the top tread of the flight below them, so
+        // the two flights are always physically connected at the turn.
+        for (const landing of layout.landings) {
+          const landGeo = new THREE.BoxGeometry(landing.w, layout.slabThickness, landing.h);
+          const mesh = new THREE.Mesh(landGeo, mat);
+          mesh.position.set(
+            landing.x + landing.w / 2,
+            landing.atRiser * layout.riserHeight - layout.slabThickness / 2,
+            landing.y + landing.h / 2
+          );
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          stairGroup.add(mesh);
+        }
       }
-      
+
+      // `direction` is a plan annotation only: a "down" stair is the same
+      // physical object as the "up" stair on the storey below, so it keeps the
+      // same footprint here instead of being mirrored out of sync with 2D.
       stairGroup.position.set(stair.position.x, 0, stair.position.y);
       stairGroup.rotation.y = -(stair.rotation * Math.PI) / 180;
-      if (stair.direction === 'down') {
-        stairGroup.rotation.y += Math.PI;
-      }
       wallGroup.add(stairGroup);
     }
   }
