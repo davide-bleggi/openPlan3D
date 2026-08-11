@@ -85,11 +85,12 @@
       ctx.fill();
     }
 
-    // Draw walls
-    ctx.strokeStyle = '#1e293b';
+    // Draw walls — hidden ones (terrace/balcony perimeters) print as a thin dashed line
     ctx.lineCap = 'round';
     for (const w of floor.walls) {
-      ctx.lineWidth = w.thickness || 12;
+      ctx.strokeStyle = w.hidden ? '#94a3b8' : '#1e293b';
+      ctx.lineWidth = w.hidden ? 2 : (w.thickness || 12);
+      ctx.setLineDash(w.hidden ? [10, 8] : []);
       ctx.beginPath();
       if (w.curvePoint) {
         ctx.moveTo(w.start.x, w.start.y);
@@ -100,13 +101,14 @@
       }
       ctx.stroke();
     }
+    ctx.setLineDash([]);
 
     // Draw doors
     ctx.strokeStyle = '#3b82f6';
     ctx.lineWidth = 2;
     for (const door of floor.doors) {
       const wall = floor.walls.find(w => w.id === door.wallId);
-      if (!wall) continue;
+      if (!wall || wall.hidden) continue;
       const dx = wall.end.x - wall.start.x;
       const dy = wall.end.y - wall.start.y;
       const px = wall.start.x + dx * door.position;
@@ -135,7 +137,7 @@
     ctx.lineWidth = 4;
     for (const win of floor.windows) {
       const wall = floor.walls.find(w => w.id === win.wallId);
-      if (!wall) continue;
+      if (!wall || wall.hidden) continue;
       const dx = wall.end.x - wall.start.x;
       const dy = wall.end.y - wall.start.y;
       const len = Math.hypot(dx, dy);

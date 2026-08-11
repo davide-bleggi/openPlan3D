@@ -18,18 +18,22 @@
     targetWall?: Wall | null;
     targetFurniture?: FurnitureItem | null;
     targetRoom?: Room | null;
+    selectedWalls?: Wall[];
     clipboard?: any;
     onclose: () => void;
     onaction: (action: string, data?: any) => void;
   }
 
-  let { x, y, visible, targetType, targetId, targetWall, targetFurniture, targetRoom, clipboard, onclose, onaction }: Props = $props();
+  let { x, y, visible, targetType, targetId, targetWall, targetFurniture, targetRoom, selectedWalls = [], clipboard, onclose, onaction }: Props = $props();
 
   let menuEl: HTMLDivElement;
 
   // Adjust position to keep menu within viewport
   let adjustedX = $state(0);
   let adjustedY = $state(0);
+
+  let selectedWallCount = $derived(selectedWalls?.length ?? 0);
+  let hiddenWallCount = $derived(selectedWalls?.filter(w => w.hidden).length ?? 0);
 
   $effect(() => {
     if (visible && menuEl) {
@@ -113,6 +117,17 @@
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('toggle-curve')}>
         <span class="ctx-icon">〰️</span> Curve {targetWall?.curvePoint ? 'Off' : 'On'}
       </button>
+      <button class="ctx-item" role="menuitem" onclick={() => clickItem('toggle-wall-hidden')}>
+        <span class="ctx-icon">{targetWall?.hidden ? '👁' : '🚫'}</span> {targetWall?.hidden ? 'Show Selected Wall' : 'Hide Selected Wall'}
+      </button>
+      {#if selectedWallCount > 1}
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('hide-selected-walls')}>
+          <span class="ctx-icon">🚫</span> Hide {selectedWallCount} Selected Walls
+        </button>
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('show-selected-walls')}>
+          <span class="ctx-icon">👁</span> Show {selectedWallCount} Selected Walls
+        </button>
+      {/if}
       <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('properties')}>
         <span class="ctx-icon">⚙️</span> Properties
@@ -194,6 +209,20 @@
   .ctx-danger:hover {
     background: #fef2f2;
   }
+  /* Dark mode: the panel is repainted dark by the global .bg-white override,
+     so the item colors have to follow or the labels become unreadable. */
+  :global(html.dark) .ctx-item {
+    color: #e5e7eb;
+  }
+  :global(html.dark) .ctx-item:hover {
+    background: #374151;
+  }
+  :global(html.dark) .ctx-danger {
+    color: #f87171;
+  }
+  :global(html.dark) .ctx-danger:hover {
+    background: #451a1a;
+  }
   .ctx-icon {
     width: 18px;
     text-align: center;
@@ -203,5 +232,8 @@
     height: 1px;
     background: #e5e7eb;
     margin: 4px 0;
+  }
+  :global(html.dark) .ctx-sep {
+    background: #374151;
   }
 </style>

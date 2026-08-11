@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode } from '$lib/stores/project';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden } from '$lib/stores/project';
   import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation, CustomEntourageDef } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
@@ -1144,7 +1144,7 @@
     if (showDoors) {
       for (const d of floor.doors) {
         const wall = floor.walls.find((w) => w.id === d.wallId);
-        if (wall) {
+        if (wall && !wall.hidden) {
           drawDoorOnWall(wall, d);
           if (isSelected(d.id)) {
             // Selection highlight box
@@ -1171,7 +1171,7 @@
     if (showWindows) {
       for (const win of floor.windows) {
         const wall = floor.walls.find((w) => w.id === win.wallId);
-        if (wall) {
+        if (wall && !wall.hidden) {
           drawWindowOnWall(wall, win);
           if (isSelected(win.id)) {
             const t = win.position;
@@ -3351,6 +3351,10 @@
     if (e.key === 'f' || e.key === 'F') {
       zoomToFit();
     }
+    // 'I' toggles invisibility for the selected wall(s) — terrace/balcony railings
+    if ((e.key === 'i' || e.key === 'I') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (selectedWallIds.length > 0) setWallsHidden(selectedWallIds, selectedWallsAnyVisible);
+    }
     // 'C' to close wall loop back to first point (but not Ctrl+C)
     if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && wallStart && wallSequenceFirst) {
       if (Math.hypot(wallStart.x - wallSequenceFirst.x, wallStart.y - wallSequenceFirst.y) > 5) {
@@ -3542,6 +3546,18 @@
     ctxMenuVisible = true;
   }
 
+  /** Walls in the current selection (multi-select, falling back to the single selection) */
+  let selectedWalls = $derived.by(() => {
+    if (!currentFloor) return [];
+    const ids = currentSelectedIds.size > 0
+      ? currentSelectedIds
+      : new Set(currentSelectedId ? [currentSelectedId] : []);
+    return currentFloor.walls.filter(w => ids.has(w.id));
+  });
+  let selectedWallIds = $derived(selectedWalls.map(w => w.id));
+  /** True when at least one selected wall is still rendered */
+  let selectedWallsAnyVisible = $derived(selectedWalls.some(w => !w.hidden));
+
   function handleContextMenuAction(action: string, _data?: any) {
     if (!currentFloor) return;
     const id = ctxMenuTargetId;
@@ -3596,6 +3612,16 @@
             updateWall(id, { curvePoint: { x: mx + (-dy / len) * 50, y: my + (dx / len) * 50 } });
           }
         }
+        break;
+
+      case 'toggle-wall-hidden':
+        if (id) toggleWallHidden(id);
+        break;
+      case 'hide-selected-walls':
+        setWallsHidden(selectedWallIds, true);
+        break;
+      case 'show-selected-walls':
+        setWallsHidden(selectedWallIds, false);
         break;
 
       // Room actions
@@ -3968,6 +3994,27 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M4 12h4M16 12h4"/></svg>
           </button>
         {/if}
+        {#if selectedWallIds.length > 0}
+          {@const wallSel = selectedWallIds}
+          {@const anyVisible = selectedWallsAnyVisible}
+          <button
+            class="h-7 px-1.5 flex items-center justify-center gap-1 rounded {anyVisible ? 'hover:bg-gray-100 text-gray-500 hover:text-gray-700' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}"
+            title={anyVisible
+              ? `Hide ${wallSel.length > 1 ? `${wallSel.length} walls` : 'wall'} — stays structural, not rendered in 3D or exports (I)`
+              : `Show ${wallSel.length > 1 ? `${wallSel.length} walls` : 'wall'} (I)`}
+            aria-label={anyVisible ? 'Hide selected walls' : 'Show selected walls'}
+            onclick={() => setWallsHidden(wallSel, anyVisible)}
+          >
+            {#if anyVisible}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            {:else}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            {/if}
+            {#if wallSel.length > 1}
+              <span class="text-[10px] leading-none tabular-nums">{wallSel.length}</span>
+            {/if}
+          </button>
+        {/if}
         <div class="w-px h-5 bg-gray-200 mx-0.5"></div>
         <button
           class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-50 text-gray-400 hover:text-red-600"
@@ -4067,6 +4114,7 @@
     targetWall={ctxMenuWall}
     targetFurniture={ctxMenuFurniture}
     targetRoom={ctxMenuRoom}
+    selectedWalls={selectedWalls}
     clipboard={clipboard}
     onclose={() => { ctxMenuVisible = false; }}
     onaction={handleContextMenuAction}
