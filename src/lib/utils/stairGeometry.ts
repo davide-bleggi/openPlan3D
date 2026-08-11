@@ -6,9 +6,12 @@
  *
  * `stair.width` is the width of a **single flight**, not of the whole stair:
  * a U-shaped stair puts two flights of that width side by side, so its
- * footprint is a little over twice as wide. `stair.depth` is how far the stair
- * runs front-to-back. `stairFootprint()` gives the resulting bounding box —
- * hit-testing, selection and bounds must use it rather than width x depth.
+ * footprint is a little over twice as wide. On a spiral stair it is the
+ * walkable depth of one tread — from the centre post out to the edge — so the
+ * radius, and therefore the diameter, follow from it. `stair.depth` is how far
+ * the stair runs front-to-back, and is unused for spirals, whose footprint is
+ * round. `stairFootprint()` gives the resulting bounding box — hit-testing,
+ * selection and bounds must use it rather than width x depth.
  *
  * Local coordinate system (before the stair's rotation/position are applied):
  *   - origin is the centre of the stair footprint
@@ -136,6 +139,17 @@ export function uShapedLandingDepth(width: number, depth: number): number {
   return Math.min(width, depth * 0.35);
 }
 
+/** Radius of a spiral stair's centre post, as a fraction of the tread width. */
+export const SPIRAL_POST_RATIO = 0.15;
+
+/**
+ * Outer radius of a spiral stair. `width` is the walkable depth of one tread,
+ * so the radius is that plus the centre post it wraps around.
+ */
+export function spiralRadius(width: number): number {
+  return width * (1 + SPIRAL_POST_RATIO);
+}
+
 /**
  * Overall bounding box of a stair, centred on `stair.position`. This is the box
  * used for hit-testing, marquee bounds and the selection outline — it is only
@@ -153,7 +167,8 @@ export function stairFootprint(stair: Stair): StairFootprint {
     case 'u-shaped':
       return { width: 2 * w + uShapedWellGap(w), depth: d };
     case 'spiral': {
-      const side = Math.min(w, d);
+      // Round footprint: `depth` plays no part, the treads set the radius
+      const side = 2 * spiralRadius(w);
       return { width: side, depth: side };
     }
     default:
@@ -181,12 +196,11 @@ export function buildStairLayout(
   const hy = footprint.depth / 2;
 
   if (type === 'spiral') {
-    const radius = Math.min(w, d) / 2;
     return {
       type: 'spiral',
       footprint,
-      radius,
-      postRadius: radius * 0.12,
+      radius: spiralRadius(w),
+      postRadius: w * SPIRAL_POST_RATIO,
       totalAngle: SPIRAL_TOTAL_ANGLE,
       startAngle: SPIRAL_START_ANGLE,
       riserCount: n,

@@ -9,7 +9,9 @@ import {
   flightRunLength,
   flightStartCoord,
   flightTreadDepth,
+  spiralRadius,
   stairFootprint,
+  SPIRAL_POST_RATIO,
   STAIR_TOTAL_RISE,
   type StairFlight,
   type StairLayout,
@@ -210,10 +212,39 @@ console.log('=== footprint from flight width ===');
     lSquat.flights.every((f) => flightRunLength(f) > 0));
 }
 
-// Spiral still fits inside the footprint.
+// Spiral: `width` is the walkable depth of one tread, so the radius follows
+// from it and `depth` plays no part.
 console.log('=== spiral ===');
-const spiral = buildStairLayout(makeStair({ stairType: 'spiral', width: 160, depth: 200 }));
-check('spiral radius fits footprint', spiral.type === 'spiral' && spiral.radius === 80);
+for (const width of [60, 100, 160]) {
+  const layout = buildStairLayout(makeStair({ stairType: 'spiral', width, depth: 200 }));
+  if (layout.type !== 'spiral') {
+    check(`spiral ${width}: layout is spiral`, false);
+    continue;
+  }
+  check(
+    `spiral ${width}: tread run equals width`,
+    Math.abs(layout.radius - layout.postRadius - width) < EPS,
+    `radius ${layout.radius} - post ${layout.postRadius} = ${layout.radius - layout.postRadius}`
+  );
+  check(
+    `spiral ${width}: footprint is the full diameter`,
+    Math.abs(layout.footprint.width - 2 * layout.radius) < EPS &&
+      Math.abs(layout.footprint.depth - 2 * layout.radius) < EPS,
+    JSON.stringify(layout.footprint)
+  );
+  check(
+    `spiral ${width}: radius = width + post`,
+    Math.abs(layout.radius - spiralRadius(width)) < EPS &&
+      Math.abs(layout.postRadius - width * SPIRAL_POST_RATIO) < EPS
+  );
+  const other = buildStairLayout(makeStair({ stairType: 'spiral', width, depth: 900 }));
+  check(
+    `spiral ${width}: depth does not affect the geometry`,
+    JSON.stringify(other) === JSON.stringify(layout)
+  );
+  check(`spiral ${width}: top tread at storey height`,
+    Math.abs(layout.riserCount * layout.riserHeight - STAIR_TOTAL_RISE) < 1e-9);
+}
 
 console.log(failures === 0 ? '\nAll stair layout checks passed' : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

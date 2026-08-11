@@ -27,6 +27,22 @@
   function inputToCm(value: number): number {
     return settings.units === 'imperial' ? value * 2.54 : value;
   }
+  /** `width` means a single flight / tread, not the whole stair — say which. */
+  function stairWidthLabel(stair: Stair): string {
+    if (stair.stairType === 'spiral') return 'Tread width';
+    if (stair.stairType === 'l-shaped' || stair.stairType === 'u-shaped') return 'Flight width';
+    return 'Width';
+  }
+  /** Spell out the resulting footprint where it differs from width × depth. */
+  function stairWidthHint(stair: Stair): string {
+    const type = stair.stairType || 'straight';
+    if (type === 'straight') return '';
+    const fp = stairFootprint(stair);
+    const size = `${Math.round(displayValue(fp.width))} × ${Math.round(displayValue(fp.depth))} ${unitLabel()}`;
+    return type === 'spiral'
+      ? `Depth of one tread, from the centre post outwards — overall footprint is ${size}`
+      : `Width of one flight — overall footprint is ${size}`;
+  }
   function unitLabel(): string {
     return settings.units === 'imperial' ? 'in' : 'cm';
   }
@@ -817,16 +833,18 @@
         </select>
       </label>
       <label class="block">
-        <span class="text-xs text-gray-500">{selectedStair.stairType === 'l-shaped' || selectedStair.stairType === 'u-shaped' ? 'Flight width' : 'Width'} ({unitLabel()})</span>
+        <span class="text-xs text-gray-500">{stairWidthLabel(selectedStair)} ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedStair.width)} oninput={(e) => updateStair(selectedStair!.id, { width: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
-      {#if selectedStair.stairType === 'l-shaped' || selectedStair.stairType === 'u-shaped'}
-        <p class="text-xs text-gray-400 -mt-2">Width of one flight — overall footprint is {Math.round(displayValue(stairFootprint(selectedStair).width))} × {Math.round(displayValue(stairFootprint(selectedStair).depth))} {unitLabel()}</p>
+      {#if stairWidthHint(selectedStair)}
+        <p class="text-xs text-gray-400 -mt-2">{stairWidthHint(selectedStair)}</p>
       {/if}
-      <label class="block">
-        <span class="text-xs text-gray-500">Depth ({unitLabel()})</span>
-        <input type="number" value={displayValue(selectedStair.depth)} oninput={(e) => updateStair(selectedStair!.id, { depth: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
-      </label>
+      {#if selectedStair.stairType !== 'spiral'}
+        <label class="block">
+          <span class="text-xs text-gray-500">Depth ({unitLabel()})</span>
+          <input type="number" value={displayValue(selectedStair.depth)} oninput={(e) => updateStair(selectedStair!.id, { depth: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+        </label>
+      {/if}
       <label class="block">
         <span class="text-xs text-gray-500">Risers</span>
         <input type="number" value={selectedStair.riserCount} min="3" max="30" oninput={(e) => updateStair(selectedStair!.id, { riserCount: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
