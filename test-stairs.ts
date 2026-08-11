@@ -9,6 +9,7 @@ import {
   flightRunLength,
   flightStartCoord,
   flightTreadDepth,
+  stairFootprint,
   STAIR_TOTAL_RISE,
   type StairFlight,
   type StairLayout,
@@ -87,17 +88,30 @@ for (const type of types) {
       const label = `${type} ${width}x${depth} / ${riserCount} risers`;
       console.log(`=== ${label} ===`);
 
-      // 1. Everything stays inside the width x depth footprint
+      // 1. Everything stays inside the reported footprint, and the footprint
+      //    is tight around it (no dead space the user could click but not see)
+      const fp = stairFootprint(stair);
       const allRects: StairRect[] = [...layout.flights, ...layout.landings];
-      const outside = allRects.filter((r) => !rectInside(r, width, depth));
+      const outside = allRects.filter((r) => !rectInside(r, fp.width, fp.depth));
       check('all flights + landings inside footprint', outside.length === 0, JSON.stringify(outside));
+      check('layout reports the same footprint', layout.footprint.width === fp.width && layout.footprint.depth === fp.depth);
+      const spanX = Math.max(...allRects.map((r) => r.x + r.w)) - Math.min(...allRects.map((r) => r.x));
+      const spanY = Math.max(...allRects.map((r) => r.y + r.h)) - Math.min(...allRects.map((r) => r.y));
+      check('footprint is tight', Math.abs(spanX - fp.width) < EPS && Math.abs(spanY - fp.depth) < EPS, `span ${spanX}x${spanY} vs footprint ${fp.width}x${fp.depth}`);
 
-      // 2. Risers add up and every flight has at least one
+      // 2. `width` is the width of a single flight, whatever the type
+      check(
+        'every flight is `width` wide',
+        layout.flights.every((f) => Math.abs((f.axis === 'x' ? f.h : f.w) - width) < EPS),
+        JSON.stringify(layout.flights.map((f) => (f.axis === 'x' ? f.h : f.w)))
+      );
+
+      // 3. Risers add up and every flight has at least one
       const sum = layout.flights.reduce((a, f) => a + f.riserCount, 0);
       check('riser counts add up', sum === layout.riserCount, `${sum} != ${layout.riserCount}`);
       check('no empty flight', layout.flights.every((f) => f.riserCount >= 1));
 
-      // 3. Flights are chained: startRiser of each flight = risers below it
+      // 4. Flights are chained: startRiser of each flight = risers below it
       let expectedStart = 0;
       let chained = true;
       for (const f of layout.flights) {
@@ -106,18 +120,18 @@ for (const type of types) {
       }
       check('flights chained by startRiser', chained);
 
-      // 4. Top tread lands exactly on the next storey
+      // 5. Top tread lands exactly on the next storey
       const topTread = layout.riserCount * layout.riserHeight;
       check('top tread at storey height', Math.abs(topTread - STAIR_TOTAL_RISE) < 1e-9);
 
-      // 5. Landing count matches the number of turns
+      // 6. Landing count matches the number of turns
       check(
         'one landing per turn',
         layout.landings.length === layout.flights.length - 1,
         `${layout.landings.length} landings, ${layout.flights.length} flights`
       );
 
-      // 6. Each landing touches the top of the flight below and the foot of
+      // 7. Each landing touches the top of the flight below and the foot of
       //    the flight above, and sits at the matching height.
       layout.landings.forEach((landing, i) => {
         const below = layout.flights[i];
@@ -138,7 +152,7 @@ for (const type of types) {
         );
       });
 
-      // 7. Tread depths are positive, and the risers are split between the two
+      // 8. Tread depths are positive, and the risers are split between the two
       //    flights as evenly as integer rounding allows.
       const treads = layout.flights.map(flightTreadDepth);
       check('tread depths positive', treads.every((t) => t > 0), JSON.stringify(treads));
@@ -171,6 +185,29 @@ for (const type of types) {
   const down = buildStairLayout(makeStair({ stairType: type, direction: 'down' })) as StairLayout;
   check(`${type}: footprint identical up/down`, JSON.stringify(up.flights) === JSON.stringify(down.flights));
   check(`${type}: landings identical up/down`, JSON.stringify(up.landings) === JSON.stringify(down.landings));
+}
+
+// The footprint follows from the flight width, not the other way round.
+console.log('=== footprint from flight width ===');
+{
+  const straight = stairFootprint(makeStair({ stairType: 'straight', width: 100, depth: 300 }));
+  check('straight: footprint is width x depth', straight.width === 100 && straight.depth === 300, JSON.stringify(straight));
+
+  const u = stairFootprint(makeStair({ stairType: 'u-shaped', width: 100, depth: 300 }));
+  check('u-shaped: two 100-wide flights plus a well', u.width === 210 && u.depth === 300, JSON.stringify(u));
+
+  const uWide = stairFootprint(makeStair({ stairType: 'u-shaped', width: 120, depth: 300 }));
+  check('u-shaped: footprint scales with flight width', uWide.width === 252, JSON.stringify(uWide));
+
+  const l = stairFootprint(makeStair({ stairType: 'l-shaped', width: 100, depth: 300 }));
+  check('l-shaped: square footprint of depth', l.width === 300 && l.depth === 300, JSON.stringify(l));
+
+  // Degenerate case: a flight wider than the requested depth still gets arms
+  const lSquat = buildStairLayout(makeStair({ stairType: 'l-shaped', width: 200, depth: 100 })) as StairLayout;
+  check('l-shaped: wide/shallow stair keeps full flight width',
+    lSquat.flights.every((f) => (f.axis === 'x' ? f.h : f.w) === 200));
+  check('l-shaped: wide/shallow stair keeps positive arms',
+    lSquat.flights.every((f) => flightRunLength(f) > 0));
 }
 
 // Spiral still fits inside the footprint.

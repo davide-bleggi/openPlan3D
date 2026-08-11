@@ -9,6 +9,7 @@ import { getCatalogItem } from '$lib/utils/furnitureCatalog';
 import { getRoomPolygon } from '$lib/utils/roomDetection';
 import { wallPointAt } from '$lib/utils/canvasRenderer';
 import type { HandleType } from '$lib/utils/canvasInteraction';
+import { stairFootprint } from '$lib/utils/stairGeometry';
 
 export function pointInPolygon(p: Point, poly: Point[]): boolean {
   let inside = false;
@@ -140,7 +141,9 @@ export function findStairAt(p: Point, stairs: Stair[] | undefined): Stair | null
     const angle = -(stair.rotation * Math.PI) / 180;
     const rx = dx * Math.cos(angle) - dy * Math.sin(angle);
     const ry = dx * Math.sin(angle) + dy * Math.cos(angle);
-    if (Math.abs(rx) < stair.width / 2 && Math.abs(ry) < stair.depth / 2) return stair;
+    // U/L-shaped stairs are wider than `stair.width` (which is one flight)
+    const fp = stairFootprint(stair);
+    if (Math.abs(rx) < fp.width / 2 && Math.abs(ry) < fp.depth / 2) return stair;
   }
   return null;
 }

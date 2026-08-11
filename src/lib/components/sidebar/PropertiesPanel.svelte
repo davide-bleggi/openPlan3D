@@ -3,6 +3,7 @@
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
+  import { stairFootprint } from '$lib/utils/stairGeometry';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import { base } from '$app/paths';
   import type { Floor, Wall, Door, Window as Win, Room, FurnitureItem, Stair, Column, RoomCategory, TextAnnotation } from '$lib/models/types';
@@ -816,9 +817,12 @@
         </select>
       </label>
       <label class="block">
-        <span class="text-xs text-gray-500">Width ({unitLabel()})</span>
+        <span class="text-xs text-gray-500">{selectedStair.stairType === 'l-shaped' || selectedStair.stairType === 'u-shaped' ? 'Flight width' : 'Width'} ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedStair.width)} oninput={(e) => updateStair(selectedStair!.id, { width: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      {#if selectedStair.stairType === 'l-shaped' || selectedStair.stairType === 'u-shaped'}
+        <p class="text-xs text-gray-400 -mt-2">Width of one flight — overall footprint is {Math.round(displayValue(stairFootprint(selectedStair).width))} × {Math.round(displayValue(stairFootprint(selectedStair).depth))} {unitLabel()}</p>
+      {/if}
       <label class="block">
         <span class="text-xs text-gray-500">Depth ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedStair.depth)} oninput={(e) => updateStair(selectedStair!.id, { depth: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />

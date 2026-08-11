@@ -998,11 +998,12 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
 export function drawStair(cs: CanvasState, stair: Stair, selected: boolean): void {
   const { ctx, zoom } = cs;
   const s = wts(cs, stair.position.x, stair.position.y);
-  const w = stair.width * zoom;
-  const d = stair.depth * zoom;
   const angle = (stair.rotation * Math.PI) / 180;
   const type = stair.stairType || 'straight';
   const layout = buildStairLayout(stair);
+  // Footprint of the whole stair — `stair.width` is only one flight wide
+  const w = layout.footprint.width * zoom;
+  const d = layout.footprint.depth * zoom;
 
   ctx.save();
   ctx.translate(s.x, s.y);
@@ -1128,9 +1129,7 @@ export function drawStair(cs: CanvasState, stair: Stair, selected: boolean): voi
 
   if (selected) {
     ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
-    const bw = type === 'spiral' ? Math.min(w, d) : w;
-    const bd = type === 'spiral' ? Math.min(w, d) : d;
-    ctx.strokeRect(-bw / 2 - 2, -bd / 2 - 2, bw + 4, bd + 4);
+    ctx.strokeRect(-w / 2 - 2, -d / 2 - 2, w + 4, d + 4);
     ctx.setLineDash([]);
   }
 
