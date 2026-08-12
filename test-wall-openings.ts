@@ -8,8 +8,15 @@
  *
  * Run with: npx tsx test-wall-openings.ts
  */
-import { buildWallSegments, DOOR_HEIGHT, type WallSegment } from './src/lib/utils/wallOpenings.js';
+import {
+  buildWallSegments,
+  doorOpeningHeight,
+  DEFAULT_DOOR_HEIGHT,
+  type WallSegment,
+} from './src/lib/utils/wallOpenings.js';
 import type { Door, Window as Win } from './src/lib/models/types.js';
+
+const DOOR_HEIGHT = DEFAULT_DOOR_HEIGHT;
 
 let allPassed = true;
 
@@ -22,9 +29,9 @@ function check(label: string, condition: boolean, detail = '') {
   }
 }
 
-function door(position: number, width: number): Door {
+function door(position: number, width: number, height = DOOR_HEIGHT): Door {
   return {
-    id: `d-${position}-${width}`, wallId: 'w1', position, width, height: DOOR_HEIGHT,
+    id: `d-${position}-${width}`, wallId: 'w1', position, width, height,
     type: 'single', swingDirection: 'left', flipSide: false,
   };
 }
@@ -177,6 +184,31 @@ console.log('\n8. A wall crowded with openings stays a clean tiling');
   check('nothing extends past the wall',
     segs.every((s) => s.offsetX - s.width / 2 >= -EPS && s.offsetX + s.width / 2 <= WALL_LEN + EPS
       && s.offsetY >= -EPS && s.offsetY + s.height <= WALL_H + EPS));
+}
+
+console.log('\n9. A door is carved to its own height, not a fixed one');
+{
+  const d = door(0.5, 90, 150);
+  const segs = buildWallSegments(WALL_LEN, WALL_H, [d], []);
+  const overlap = findOverlap(segs);
+  check('no two segments overlap', overlap === null, overlap ?? '');
+  check('the lintel starts at the door head',
+    segs.some((s) => Math.abs(s.offsetY - 150) < EPS && Math.abs(s.width - d.width) < EPS),
+    segs.map((s) => `y${s.offsetY} w${s.width}`).join(', '));
+  check('the opening is the door\'s own height',
+    Math.abs(coveredArea(segs) - (WALL_LEN * WALL_H - 90 * 150)) < EPS);
+
+  const tall = buildWallSegments(WALL_LEN, WALL_H, [door(0.5, 90, 250)], []);
+  check('a taller door carves more',
+    Math.abs(coveredArea(tall) - (WALL_LEN * WALL_H - 90 * 250)) < EPS);
+}
+
+console.log('\n10. doorOpeningHeight');
+{
+  check('uses the door\'s height', doorOpeningHeight(door(0.5, 90, 195), 270) === 195);
+  check('clamps to the wall', doorOpeningHeight(door(0.5, 90, 300), 270) === 270);
+  check('falls back for a door with no height',
+    doorOpeningHeight({ ...door(0.5, 90), height: undefined as unknown as number }, 270) === DOOR_HEIGHT);
 }
 
 console.log(allPassed ? '\nAll checks passed.\n' : '\nSome checks FAILED.\n');

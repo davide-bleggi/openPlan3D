@@ -28,7 +28,7 @@
   import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
   import {
     buildWallSegments,
-    DOOR_HEIGHT,
+    doorOpeningHeight,
     DOOR_JAMB,
     OPENING_TRIM_EPS
   } from '$lib/utils/wallOpenings';
@@ -1650,7 +1650,7 @@
       const wt = Math.max(wall.thickness, WALL_THICKNESS);
 
       const frameMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.6 });
-      const doorHeight = DOOR_HEIGHT;
+      const doorHeight = doorOpeningHeight(door, wall.height);
       const jamb = DOOR_JAMB;
       const eps = OPENING_TRIM_EPS;
       const halfDW = door.width / 2;
@@ -1658,8 +1658,9 @@
       // Jambs and header line the carved opening: each one reaches `eps` past the wall's
       // cut face so the reveal is covered by trim rather than sharing a plane with it.
       // The three pieces tile edge to edge — the jambs run the full trim height and the
-      // header spans between them — so no two trim boxes overlap either.
-      const trimTop = doorHeight + jamb;
+      // header spans between them — so no two trim boxes overlap either. A door reaching
+      // the top of its wall has no lintel to line, so the trim stops at the wall.
+      const trimTop = Math.min(doorHeight + jamb, wall.height);
 
       // Left jamb
       const ljGeo = new THREE.BoxGeometry(jamb + eps, trimTop, wt + 2);
@@ -1687,12 +1688,15 @@
       wallGroup.add(rjMesh);
 
       // Header — spans between the jambs and drops `eps` below the lintel's underside
-      const hGeo = new THREE.BoxGeometry(Math.max(door.width - eps * 2, 0.1), jamb + eps, wt + 2);
-      const hMesh = new THREE.Mesh(hGeo, frameMat);
-      hMesh.position.set(px, doorHeight + (jamb - eps) / 2, py);
-      hMesh.rotation.y = -angle;
-      hMesh.castShadow = true;
-      wallGroup.add(hMesh);
+      if (trimTop > doorHeight) {
+        const headerH = trimTop - doorHeight + eps;
+        const hGeo = new THREE.BoxGeometry(Math.max(door.width - eps * 2, 0.1), headerH, wt + 2);
+        const hMesh = new THREE.Mesh(hGeo, frameMat);
+        hMesh.position.set(px, trimTop - headerH / 2, py);
+        hMesh.rotation.y = -angle;
+        hMesh.castShadow = true;
+        wallGroup.add(hMesh);
+      }
 
       if (door.type === 'opening') {
         // Plain doorway — jambs and header only, no door leaf
@@ -1700,9 +1704,9 @@
         // Sectional overhead door: stacked horizontal panels filling the opening
         const secMat = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.7 });
         const sections = 4;
-        const secH = (doorHeight - 6) / sections;
+        const secH = Math.max((doorHeight - 6) / sections, 0.1);
         for (let si = 0; si < sections; si++) {
-          const secGeo = new THREE.BoxGeometry(door.width - 2, secH - 2, 5);
+          const secGeo = new THREE.BoxGeometry(door.width - 2, Math.max(secH - 2, 0.1), 5);
           const secMesh = new THREE.Mesh(secGeo, secMat);
           secMesh.position.set(px, secH / 2 + 2 + si * secH, py);
           secMesh.rotation.y = -angle;
@@ -1712,7 +1716,7 @@
       } else {
         // Door panel — hinged on left side, slightly ajar (15°)
         const panelMat = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.5 });
-        const panelGeo = new THREE.BoxGeometry(door.width - 2, doorHeight - 4, 4);
+        const panelGeo = new THREE.BoxGeometry(door.width - 2, Math.max(doorHeight - 4, 0.1), 4);
         // Shift geometry so pivot is at left edge
         panelGeo.translate(door.width / 2 - 1, 0, 0);
         const panelMesh = new THREE.Mesh(panelGeo, panelMat);
@@ -1734,13 +1738,14 @@
         const handleMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
         const handleGeo = new THREE.SphereGeometry(3, 8, 8);
         const handleMesh = new THREE.Mesh(handleGeo, handleMat);
-        // Place on the door panel's right side at handle height
+        // Place on the door panel's right side at handle height, kept on the leaf if the
+        // door is shorter than a normal one
         const handleLocalX = door.width - 12;
         const handleCos = Math.cos(-angle + swingAngle);
         const handleSin = Math.sin(-angle + swingAngle);
         handleMesh.position.set(
           panelMesh.position.x + handleLocalX * handleCos,
-          100,
+          Math.min(100, doorHeight / 2),
           panelMesh.position.z - handleLocalX * handleSin
         );
         wallGroup.add(handleMesh);

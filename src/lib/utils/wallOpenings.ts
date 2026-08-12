@@ -20,10 +20,18 @@ import type { Door, Window as Win } from '$lib/models/types';
 
 /** How far trim reaches past the wall's cut face, in cm. */
 export const OPENING_TRIM_EPS = 0.5;
-/** Head height of a door opening, in cm. */
-export const DOOR_HEIGHT = 210;
+/** Head height of a door opening when the door doesn't give one, in cm. */
+export const DEFAULT_DOOR_HEIGHT = 210;
 /** Jamb/header thickness around a door opening, in cm. */
 export const DOOR_JAMB = 5;
+
+/**
+ * Head height of this door's opening, in cm. Doors carry their own height, and
+ * a door taller than its wall is carved only as far as the wall goes.
+ */
+export function doorOpeningHeight(door: Door, wallHeight: number): number {
+  return Math.min(door.height ?? DEFAULT_DOOR_HEIGHT, wallHeight);
+}
 
 /** One solid box of wall. `offsetX` is its centre along the wall, `offsetY` its base. */
 export interface WallSegment {
@@ -62,7 +70,7 @@ export function buildWallSegments(
     if (right - left <= 0 || top - bottom <= 0) return;
     openings.push({ left, right, bottomY: bottom, topY: top });
   };
-  for (const d of doors) addOpening(d.position * wallLen, d.width, 0, DOOR_HEIGHT);
+  for (const d of doors) addOpening(d.position * wallLen, d.width, 0, doorOpeningHeight(d, wallH));
   for (const w of windows) {
     addOpening(w.position * wallLen, w.width, w.sillHeight, w.sillHeight + w.height);
   }
