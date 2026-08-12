@@ -15,9 +15,9 @@
   import { activeFloor, elevationWallId, selectedElementId, selectedElementIds, selectedRoomId, updateDoor, updateWindow, beginUndoGroup, endUndoGroup } from '$lib/stores/project';
   import { projectSettings, formatLength } from '$lib/stores/settings';
   import type { Door, Window as Win } from '$lib/models/types';
+  import { doorOpeningHeight } from '$lib/utils/wallOpenings';
 
   const DEFAULT_WALL_HEIGHT = 240; // cm — fallback when a wall has no height
-  const DEFAULT_DOOR_HEIGHT = 210; // cm
   const DEFAULT_SILL = 90;         // cm
   const GRID_STEP = 50;            // cm (0.5 m)
 
@@ -171,7 +171,7 @@
     if (!wall) return [];
     const rects: OpeningRect[] = [];
     for (const d of doors) {
-      const h = Math.min(d.height ?? DEFAULT_DOOR_HEIGHT, wallH);
+      const h = doorOpeningHeight(d, wallH);
       rects.push({ id: d.id, kind: 'door', x: d.position * wallLen - d.width / 2, y: 0, w: d.width, h });
     }
     for (const w of windows) {

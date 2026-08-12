@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { activeFloor, currentProject, detectedRoomsStore, selectedElementId } from '$lib/stores/project';
-  import type { Floor, Wall, Door, Window as Win, Room, Stair, Point } from '$lib/models/types';
+  import type { Floor, Wall, Room, Stair, Point } from '$lib/models/types';
   import { wallColors, type WallColor } from '$lib/utils/materials';
   import { projectSettings, formatArea } from '$lib/stores/settings';
   import * as THREE from 'three';
@@ -26,6 +26,12 @@
     type StairFlight
   } from '$lib/utils/stairGeometry';
   import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
+  import {
+    buildWallSegments,
+    doorOpeningHeight,
+    DOOR_JAMB,
+    OPENING_TRIM_EPS
+  } from '$lib/utils/wallOpenings';
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer;
@@ -1535,7 +1541,7 @@
 
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
-      const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
+      const segments = buildWallSegments(len, h, doorOpenings, winOpenings);
       // Always present: computeWallJoins returns an entry for every straight wall.
       const join = wallJoins.get(wall.id)!;
       const r = t / 2;
@@ -1607,12 +1613,14 @@
       if (doorOpeningsForBB.length === 0) {
         addBaseboardSegment(0, len);
       } else {
-        // Build baseboard segments skipping door gaps
+        // Build baseboard segments skipping door gaps. The gap clears the jambs too: the
+        // baseboard and the casing stand equally proud of the wall, so any span they share
+        // would leave their outer faces coplanar and flickering.
         const sortedDoors = [...doorOpeningsForBB].sort((a, b) => a.position - b.position);
         let bbCursor = 0;
         for (const door of sortedDoors) {
-          const dLeft = door.position * len - door.width / 2;
-          const dRight = door.position * len + door.width / 2;
+          const dLeft = door.position * len - door.width / 2 - DOOR_JAMB;
+          const dRight = door.position * len + door.width / 2 + DOOR_JAMB;
           if (dLeft > bbCursor) addBaseboardSegment(bbCursor, dLeft);
           bbCursor = Math.max(bbCursor, dRight);
         }
@@ -1642,16 +1650,25 @@
       const wt = Math.max(wall.thickness, WALL_THICKNESS);
 
       const frameMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.6 });
-      const doorHeight = 210;
-      const jamb = 5; // jamb thickness
+      const doorHeight = doorOpeningHeight(door, wall.height);
+      const jamb = DOOR_JAMB;
+      const eps = OPENING_TRIM_EPS;
+      const halfDW = door.width / 2;
+
+      // Jambs and header line the carved opening: each one reaches `eps` past the wall's
+      // cut face so the reveal is covered by trim rather than sharing a plane with it.
+      // The three pieces tile edge to edge — the jambs run the full trim height and the
+      // header spans between them — so no two trim boxes overlap either. A door reaching
+      // the top of its wall has no lintel to line, so the trim stops at the wall.
+      const trimTop = Math.min(doorHeight + jamb, wall.height);
 
       // Left jamb
-      const ljGeo = new THREE.BoxGeometry(jamb, doorHeight, wt + 2);
+      const ljGeo = new THREE.BoxGeometry(jamb + eps, trimTop, wt + 2);
       const ljMesh = new THREE.Mesh(ljGeo, frameMat);
-      const ljOffset = -door.width / 2 - jamb / 2;
+      const ljOffset = -(halfDW + jamb / 2 - eps / 2);
       ljMesh.position.set(
         px + ljOffset * Math.cos(angle),
-        doorHeight / 2,
+        trimTop / 2,
         py + ljOffset * Math.sin(angle)
       );
       ljMesh.rotation.y = -angle;
@@ -1660,23 +1677,26 @@
 
       // Right jamb
       const rjMesh = new THREE.Mesh(ljGeo, frameMat);
-      const rjOffset = door.width / 2 + jamb / 2;
+      const rjOffset = halfDW + jamb / 2 - eps / 2;
       rjMesh.position.set(
         px + rjOffset * Math.cos(angle),
-        doorHeight / 2,
+        trimTop / 2,
         py + rjOffset * Math.sin(angle)
       );
       rjMesh.rotation.y = -angle;
       rjMesh.castShadow = true;
       wallGroup.add(rjMesh);
 
-      // Header
-      const hGeo = new THREE.BoxGeometry(door.width + jamb * 2, jamb, wt + 2);
-      const hMesh = new THREE.Mesh(hGeo, frameMat);
-      hMesh.position.set(px, doorHeight + jamb / 2, py);
-      hMesh.rotation.y = -angle;
-      hMesh.castShadow = true;
-      wallGroup.add(hMesh);
+      // Header — spans between the jambs and drops `eps` below the lintel's underside
+      if (trimTop > doorHeight) {
+        const headerH = trimTop - doorHeight + eps;
+        const hGeo = new THREE.BoxGeometry(Math.max(door.width - eps * 2, 0.1), headerH, wt + 2);
+        const hMesh = new THREE.Mesh(hGeo, frameMat);
+        hMesh.position.set(px, trimTop - headerH / 2, py);
+        hMesh.rotation.y = -angle;
+        hMesh.castShadow = true;
+        wallGroup.add(hMesh);
+      }
 
       if (door.type === 'opening') {
         // Plain doorway — jambs and header only, no door leaf
@@ -1684,9 +1704,9 @@
         // Sectional overhead door: stacked horizontal panels filling the opening
         const secMat = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.7 });
         const sections = 4;
-        const secH = (doorHeight - 6) / sections;
+        const secH = Math.max((doorHeight - 6) / sections, 0.1);
         for (let si = 0; si < sections; si++) {
-          const secGeo = new THREE.BoxGeometry(door.width - 2, secH - 2, 5);
+          const secGeo = new THREE.BoxGeometry(door.width - 2, Math.max(secH - 2, 0.1), 5);
           const secMesh = new THREE.Mesh(secGeo, secMat);
           secMesh.position.set(px, secH / 2 + 2 + si * secH, py);
           secMesh.rotation.y = -angle;
@@ -1696,7 +1716,7 @@
       } else {
         // Door panel — hinged on left side, slightly ajar (15°)
         const panelMat = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.5 });
-        const panelGeo = new THREE.BoxGeometry(door.width - 2, doorHeight - 4, 4);
+        const panelGeo = new THREE.BoxGeometry(door.width - 2, Math.max(doorHeight - 4, 0.1), 4);
         // Shift geometry so pivot is at left edge
         panelGeo.translate(door.width / 2 - 1, 0, 0);
         const panelMesh = new THREE.Mesh(panelGeo, panelMat);
@@ -1718,13 +1738,14 @@
         const handleMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
         const handleGeo = new THREE.SphereGeometry(3, 8, 8);
         const handleMesh = new THREE.Mesh(handleGeo, handleMat);
-        // Place on the door panel's right side at handle height
+        // Place on the door panel's right side at handle height, kept on the leaf if the
+        // door is shorter than a normal one
         const handleLocalX = door.width - 12;
         const handleCos = Math.cos(-angle + swingAngle);
         const handleSin = Math.sin(-angle + swingAngle);
         handleMesh.position.set(
           panelMesh.position.x + handleLocalX * handleCos,
-          100,
+          Math.min(100, doorHeight / 2),
           panelMesh.position.z - handleLocalX * handleSin
         );
         wallGroup.add(handleMesh);
@@ -1744,19 +1765,36 @@
 
       const frameMat = new THREE.MeshStandardMaterial({ color: 0xe0e0e0, roughness: 0.4, metalness: 0.1 });
       const mullionW = 4; // mullion bar width
+      const eps = OPENING_TRIM_EPS;
+      const halfWinW = win.width / 2;
+      const halfWinH = win.height / 2;
+
+      // The frame sits inside the carved opening and bites `eps` into the wall on all four
+      // sides, so the wall's cut faces stay hidden behind the frame instead of sharing a
+      // plane with it. The members also tile edge to edge rather than overlapping each
+      // other — two bars covering the same span would put two coplanar faces at the same
+      // depth, the same artifact one level down.
+      const innerW = win.width - mullionW * 2;   // clear width between left and right bars
+      const innerH = win.height - mullionW * 2;
+      const paneW = (innerW - mullionW) / 2;     // one pane, either side of the centre mullion
+      const paneH = (innerH - mullionW) / 2;
+      const hasMullions = paneW > 0 && paneH > 0;
 
       // Outer frame — 4 bars forming rectangle
       const bars: { w: number; h: number; ox: number; oy: number }[] = [
-        { w: win.width + mullionW * 2, h: mullionW, ox: 0, oy: -win.height / 2 - mullionW / 2 }, // bottom
-        { w: win.width + mullionW * 2, h: mullionW, ox: 0, oy: win.height / 2 + mullionW / 2 },  // top
-        { w: mullionW, h: win.height, ox: -win.width / 2 - mullionW / 2, oy: 0 },  // left
-        { w: mullionW, h: win.height, ox: win.width / 2 + mullionW / 2, oy: 0 },   // right
-        // Center vertical mullion
-        { w: mullionW, h: win.height, ox: 0, oy: 0 },
-        // Center horizontal mullion
-        { w: win.width, h: mullionW, ox: 0, oy: 0 },
+        { w: win.width + eps * 2, h: mullionW + eps, ox: 0, oy: -halfWinH + (mullionW - eps) / 2 }, // bottom
+        { w: win.width + eps * 2, h: mullionW + eps, ox: 0, oy: halfWinH - (mullionW - eps) / 2 },  // top
+        { w: mullionW + eps, h: innerH, ox: -halfWinW + (mullionW - eps) / 2, oy: 0 },  // left
+        { w: mullionW + eps, h: innerH, ox: halfWinW - (mullionW - eps) / 2, oy: 0 },   // right
       ];
+      if (hasMullions) {
+        // Center vertical mullion, and the horizontal one split either side of it
+        bars.push({ w: mullionW, h: innerH, ox: 0, oy: 0 });
+        bars.push({ w: paneW, h: mullionW, ox: -(mullionW + paneW) / 2, oy: 0 });
+        bars.push({ w: paneW, h: mullionW, ox: (mullionW + paneW) / 2, oy: 0 });
+      }
       for (const bar of bars) {
+        if (bar.w <= 0 || bar.h <= 0) continue;
         const geo = new THREE.BoxGeometry(bar.w, bar.h, mullionW);
         const mesh = new THREE.Mesh(geo, frameMat);
         mesh.position.set(
@@ -1768,32 +1806,44 @@
         wallGroup.add(mesh);
       }
 
-      // Glass panes (4 quadrants)
+      // Glass panes (4 quadrants, or a single pane if the window is too small to mullion).
+      // Each pane is grown by `eps` all round so its edges end up buried inside the frame
+      // bars — the panes are thinner than the frame, so the overlap never pokes out.
       const glassMat = new THREE.MeshStandardMaterial({
         color: 0xa8d8ea, transparent: true, opacity: 0.3,
         roughness: 0.05, metalness: 0.1, side: THREE.DoubleSide
       });
-      const halfW = (win.width - mullionW) / 2;
-      const halfH = (win.height - mullionW) / 2;
-      for (const qx of [-1, 1]) {
-        for (const qy of [-1, 1]) {
-          const gGeo = new THREE.BoxGeometry(halfW, halfH, 1);
-          const gMesh = new THREE.Mesh(gGeo, glassMat);
-          const ox = qx * (halfW / 2 + mullionW / 2);
-          gMesh.position.set(
-            px + ox * Math.cos(angle),
-            winCY + qy * (halfH / 2 + mullionW / 2),
-            py + ox * Math.sin(angle)
-          );
-          gMesh.rotation.y = -angle;
-          wallGroup.add(gMesh);
+      const panes: { w: number; h: number; ox: number; oy: number }[] = [];
+      if (hasMullions) {
+        for (const qx of [-1, 1]) {
+          for (const qy of [-1, 1]) {
+            panes.push({
+              w: paneW, h: paneH,
+              ox: qx * (mullionW + paneW) / 2,
+              oy: qy * (mullionW + paneH) / 2,
+            });
+          }
         }
+      } else if (innerW > 0 && innerH > 0) {
+        panes.push({ w: innerW, h: innerH, ox: 0, oy: 0 });
+      }
+      for (const pane of panes) {
+        const gGeo = new THREE.BoxGeometry(pane.w + eps * 2, pane.h + eps * 2, 1);
+        const gMesh = new THREE.Mesh(gGeo, glassMat);
+        gMesh.position.set(
+          px + pane.ox * Math.cos(angle),
+          winCY + pane.oy,
+          py + pane.ox * Math.sin(angle)
+        );
+        gMesh.rotation.y = -angle;
+        wallGroup.add(gMesh);
       }
 
-      // Sill — protruding ledge
-      const sillGeo = new THREE.BoxGeometry(win.width + 16, 4, wt + 10);
+      // Sill — protruding ledge. Its top rises `eps` above the opening's cut face so it
+      // covers it across the full wall depth instead of landing flush with it.
+      const sillGeo = new THREE.BoxGeometry(win.width + 16, 4 + eps, wt + 10);
       const sillMesh = new THREE.Mesh(sillGeo, frameMat);
-      sillMesh.position.set(px, win.sillHeight - 2, py);
+      sillMesh.position.set(px, win.sillHeight - 2 + eps / 2, py);
       sillMesh.rotation.y = -angle;
       sillMesh.castShadow = true;
       wallGroup.add(sillMesh);
@@ -2065,7 +2115,7 @@
 
       const doorOpenings = floor.doors.filter((d) => d.wallId === wall.id);
       const winOpenings = floor.windows.filter((w) => w.wallId === wall.id);
-      const segments = buildWallSegments(len, h, t, doorOpenings, winOpenings);
+      const segments = buildWallSegments(len, h, doorOpenings, winOpenings);
       // Always present: computeWallJoins returns an entry for every straight wall.
       const join = wallJoins.get(wall.id)!;
       const r = t / 2;
@@ -2164,56 +2214,6 @@
       buildWalls(currentFloor);
     }
     markSceneDirty();
-  }
-
-  interface WallSegment {
-    width: number;
-    height: number;
-    offsetX: number;
-    offsetY: number;
-  }
-
-  function buildWallSegments(
-    wallLen: number, wallH: number, _t: number,
-    doors: Door[], windows: Win[]
-  ): WallSegment[] {
-    type Opening = { pos: number; width: number; bottomY: number; topY: number };
-    const openings: Opening[] = [];
-    for (const d of doors) {
-      openings.push({ pos: d.position * wallLen, width: d.width, bottomY: 0, topY: 210 });
-    }
-    for (const w of windows) {
-      openings.push({ pos: w.position * wallLen, width: w.width, bottomY: w.sillHeight, topY: w.sillHeight + w.height });
-    }
-
-    if (openings.length === 0) {
-      return [{ width: wallLen, height: wallH, offsetX: wallLen / 2, offsetY: 0 }];
-    }
-
-    openings.sort((a, b) => a.pos - b.pos);
-    const segs: WallSegment[] = [];
-    let cursor = 0;
-
-    for (const op of openings) {
-      const left = op.pos - op.width / 2;
-      const right = op.pos + op.width / 2;
-      if (left > cursor) {
-        segs.push({ width: left - cursor, height: wallH, offsetX: cursor + (left - cursor) / 2, offsetY: 0 });
-      }
-      if (op.topY < wallH) {
-        segs.push({ width: op.width, height: wallH - op.topY, offsetX: op.pos, offsetY: op.topY });
-      }
-      if (op.bottomY > 0) {
-        segs.push({ width: op.width, height: op.bottomY, offsetX: op.pos, offsetY: 0 });
-      }
-      cursor = Math.max(cursor, right);
-    }
-
-    if (cursor < wallLen) {
-      segs.push({ width: wallLen - cursor, height: wallH, offsetX: cursor + (wallLen - cursor) / 2, offsetY: 0 });
-    }
-
-    return segs;
   }
 
   function onKeyDown(event: KeyboardEvent) {
