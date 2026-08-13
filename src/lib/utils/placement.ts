@@ -40,6 +40,7 @@ export type PlacementKind =
   | 'entourage'
   | 'entourage-resize'
   | 'handle'
+  | 'rotate'
   | 'door'
   | 'window'
   | 'stair'
@@ -94,6 +95,7 @@ const KIND_META: Record<PlacementKind, KindMeta> = {
   entourage:          { label: 'Moved entourage',       mutates: true,  hint: 'Moving symbol' },
   'entourage-resize': { label: 'Resized entourage',     mutates: true,  hint: 'Resizing symbol' },
   handle:             { label: 'Resized furniture',     mutates: true,  hint: 'Resizing' },
+  rotate:             { label: 'Rotated furniture',     mutates: true,  hint: 'Rotating' },
   door:               { label: 'Moved door',            mutates: true,  hint: 'Moving door' },
   window:             { label: 'Moved window',          mutates: true,  hint: 'Moving window' },
   stair:              { label: 'Moved stair',           mutates: true,  hint: 'Moving stair' },

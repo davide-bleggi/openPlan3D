@@ -321,6 +321,37 @@ export function setFurnitureRotation(id: string, angle: number) {
   }, undefined, coalesceKeyFor('furniture', id, { rotation: angle }));
 }
 
+/**
+ * Resize a placed item during a handle drag.
+ *
+ * Writes real centimetre dimensions into `width`/`depth` and normalises `scale`
+ * to ±1 (the sign is kept, it mirrors the icon). Effective size is
+ * `(width ?? catalog.width) * |scale.x|` everywhere, so folding the scale into
+ * the dimensions leaves the item exactly where it was drawn while making the
+ * number in the properties panel the same number the handles produce.
+ *
+ * `position` moves with it: a resize pivots on the opposite corner/edge, so the
+ * centre shifts by half the size change. No undo snapshot — the gesture's undo
+ * group covers the whole drag.
+ */
+export function resizeFurniture(id: string, size: { width: number; depth: number }, position: Point) {
+  const p = get(currentProject);
+  if (!p) return;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  const item = floor?.furniture.find((fi) => fi.id === id);
+  if (!item) return;
+  item.width = size.width;
+  item.depth = size.depth;
+  item.scale = {
+    x: Math.sign(item.scale?.x ?? 1) || 1,
+    y: Math.sign(item.scale?.y ?? 1) || 1,
+    z: item.scale?.z ?? 1,
+  };
+  item.position = position;
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
+
 /** Set an absolute scale. Called once per pointer move while a resize handle is
  *  dragged — coalesced for the same reason as setFurnitureRotation. */
 export function scaleFurniture(id: string, scale: { x: number; y: number }) {

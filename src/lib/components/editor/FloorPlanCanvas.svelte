@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, rotateFurniture, setFurnitureRotation, scaleFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, cancelUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden } from '$lib/stores/project';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, cancelUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden } from '$lib/stores/project';
   import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation, CustomEntourageDef } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
-  import { getCatalogItem } from '$lib/utils/furnitureCatalog';
+  import { getCatalogItem, furnitureSize } from '$lib/utils/furnitureCatalog';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
@@ -13,7 +13,8 @@
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import type { ProjectSettings } from '$lib/stores/settings';
-  import type { CanvasState } from '$lib/utils/canvasInteraction';
+  import type { CanvasState, ResizeStart, ResizeHandle, HandleType } from '$lib/utils/canvasInteraction';
+  import { startResize, resizeFrom } from '$lib/utils/canvasInteraction';
   import { drawWall as _drawWall, drawDoorOnWall as _drawDoorOnWall, drawWindowOnWall as _drawWindowOnWall, drawDoorDistanceDimensions as _drawDoorDistanceDimensions, drawWindowDistanceDimensions as _drawWindowDistanceDimensions, drawFurnitureItem, drawStair as _drawStair, drawColumn as _drawColumn, drawGuides as _drawGuides, drawPersistedMeasurements as _drawPersistedMeasurements, drawTextAnnotations as _drawTextAnnotations, drawAnnotation as _drawAnnotation, drawAnnotations as _drawAnnotations, drawRooms as _drawRooms, drawWallJoints as _drawWallJoints, drawSnapPoints as _drawSnapPoints, drawMinimap as _drawMinimap, drawEntourageItems as _drawEntourageItems, drawEntourageGhost as _drawEntourageGhost, entourageAspect } from '$lib/utils/canvasRenderer';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { stairFootprint } from '$lib/utils/stairGeometry';
@@ -58,6 +59,8 @@
   let panStartY = 0;
   let spaceDown = $state(false);
   let shiftDown = $state(false);
+  /** Alt bypasses snapping for the gesture in progress. */
+  let altDown = $state(false);
 
   // Furniture drag state
   let draggingFurnitureId: string | null = $state(null);
@@ -174,11 +177,11 @@
   let dragPreview: { x: number; y: number; type: string; width: number; depth: number } | null = $state(null);
 
   // Resize/rotate handle drag state
-  type HandleType = 'resize-tl' | 'resize-tr' | 'resize-bl' | 'resize-br' | 'resize-t' | 'resize-b' | 'resize-l' | 'resize-r' | 'rotate';
   let draggingHandle = $state<HandleType | null>(null);
   let handleDragStart: Point = { x: 0, y: 0 };
-  let handleOrigScale: { x: number; y: number } = { x: 1, y: 1 };
   let handleOrigRotation: number = 0;
+  /** Frozen start state of the resize in progress (see startResize). */
+  let resizeStart: (ResizeStart & { id: string }) | null = null;
 
   // Wall parallel drag state (drag midpoint to move wall parallel)
   let draggingWallParallel: { wallId: string; startMousePos: Point; origStart: Point; origEnd: Point; origCurve?: Point; connectedStart: { wallId: string; endpoint: 'start' | 'end' }[]; connectedEnd: { wallId: string; endpoint: 'start' | 'end' }[] } | null = $state(null);
@@ -218,7 +221,7 @@
     { active: () => !!draggingWallParallel,       clear: () => { draggingWallParallel = null; } },
     { active: () => !!draggingCurveHandle,        clear: () => { draggingCurveHandle = null; } },
     { active: () => !!draggingWallEndpoint,       clear: () => { draggingWallEndpoint = null; draggingConnectedEndpoints = []; } },
-    { active: () => !!draggingHandle,             clear: () => { draggingHandle = null; } },
+    { active: () => !!draggingHandle,             clear: () => { draggingHandle = null; resizeStart = null; placementDetail = null; } },
     { active: () => !!draggingFurnitureId,        clear: () => { draggingFurnitureId = null; dragWasWallSnapped = false; wallSnapInfo = null; } },
     { active: () => !!draggingEntourageId,        clear: () => { draggingEntourageId = null; } },
     { active: () => !!resizingEntourageId,        clear: () => { resizingEntourageId = null; } },
@@ -244,6 +247,8 @@
   let activePlacement: PlacementKind | null = $state(null);
   /** True once that gesture passed the drag threshold (a click shows no hint). */
   let placementEngaged = $state(false);
+  /** Live readout for the gesture chip — the size while resizing, say. */
+  let placementDetail: string | null = $state(null);
 
   const placement = createPlacementController({
     beginUndo: () => beginUndoGroup(),
@@ -258,6 +263,7 @@
       }
       activePlacement = null;
       placementEngaged = false;
+      placementDetail = null;
       markDirty();
     },
   });
@@ -348,17 +354,37 @@
     return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad };
   }
 
+  /** Round a length to the snap step, honouring the Snap switch (Alt bypasses it). */
+  function snapLength(v: number): number {
+    if (!currentSnapEnabled || altDown) return v;
+    const step = currentSnapToGrid ? currentGridSize : SNAP;
+    return Math.max(step, Math.round(v / step) * step);
+  }
+
+  /** Capture the frozen state a resize drag works from. */
+  function beginResize(fi: FurnitureItem, handle: ResizeHandle, wp: Point) {
+    resizeStart = { id: fi.id, ...startResize(fi, furnitureSize(fi), handle, wp) };
+  }
+
+  /** Resize from the frozen start state — Shift keeps the aspect ratio. */
+  function applyResize(wp: Point) {
+    if (!resizeStart) return;
+    const next = resizeFrom(resizeStart, wp, { snapLength, keepAspect: shiftDown });
+    resizeFurniture(resizeStart.id, { width: next.width, depth: next.depth }, next.position);
+    placementDetail = `${formatLength(next.width, dimSettings.units)} × ${formatLength(next.depth, dimSettings.units)}`;
+  }
+
   /**
    * Snap furniture position so its edge is flush against the nearest wall.
    * Returns adjusted position and rotation, or null if no wall is close enough.
    */
-  function snapFurnitureToWall(pos: Point, catalogId: string, currentRotation: number): { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null {
+  function snapFurnitureToWall(pos: Point, size: { width: number; depth: number }, currentRotation: number): { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null {
     if (!currentFloor) return null;
-    const cat = getCatalogItem(catalogId);
-    if (!cat) return null;
+    // Wall snapping is snapping: the Snap switch turns it off like everything else.
+    if (!currentSnapEnabled) return null;
 
     // Furniture half-depth (the "back" dimension that goes against the wall)
-    const halfDepth = cat.depth / 2;
+    const halfDepth = size.depth / 2;
 
     let bestDist = WALL_SNAP_DIST;
     let bestResult: { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null = null;
@@ -380,7 +406,7 @@
       const perp = dx * nx + dy * ny;  // signed distance from wall center-line
 
       // Check if projection falls within wall segment (with some margin)
-      if (along < -cat.width / 2 || along > wLen + cat.width / 2) continue;
+      if (along < -size.width / 2 || along > wLen + size.width / 2) continue;
 
       const wallHalfThickness = wall.thickness / 2;
       // Distance from furniture center to wall surface on the side the furniture is on
@@ -395,7 +421,7 @@
         const sign = perp >= 0 ? 1 : -1;
         // Position: push center so edge is flush with wall surface
         const targetPerp = sign * (wallHalfThickness + halfDepth);
-        const clampedAlong = Math.max(cat.width / 2, Math.min(wLen - cat.width / 2, along));
+        const clampedAlong = Math.max(size.width / 2, Math.min(wLen - size.width / 2, along));
         const newX = wall.start.x + ux * clampedAlong + nx * targetPerp;
         const newY = wall.start.y + uy * clampedAlong + ny * targetPerp;
         // Align rotation: furniture "front" faces away from wall
@@ -416,7 +442,16 @@
   }
 
   function snap(v: number): number {
-    if (!currentSnapEnabled) return v;
+    if (!currentSnapEnabled || altDown) return v;
+    const step = currentSnapToGrid ? currentGridSize : SNAP;
+    return Math.round(v / step) * step;
+  }
+
+  /** Quantise a drag delta to the snap step. Same switch as snap(), so a
+   *  drag that moves a wall, a room or a multi-selection is free-form when
+   *  snapping is off instead of silently rounding to the grid anyway. */
+  function snapDelta(v: number): number {
+    if (!currentSnapEnabled || altDown) return v;
     const step = currentSnapToGrid ? currentGridSize : SNAP;
     return Math.round(v / step) * step;
   }
@@ -447,6 +482,10 @@
   }
 
   function magneticSnap(p: Point, excludeWallIds?: Set<string>): Point & { snappedToEndpoint?: boolean; snappedToWall?: boolean; snappedWallId?: string } {
+    // Snap off means off: no grid, and no magnetic pull to endpoints or walls
+    // either. Previously only the grid step was skipped, so turning Snap off
+    // left points still jumping onto nearby geometry.
+    if (!currentSnapEnabled) return { x: p.x, y: p.y };
     if (!currentFloor) return { x: snap(p.x), y: snap(p.y) };
     let best: Point & { snappedToEndpoint?: boolean; snappedToWall?: boolean; snappedWallId?: string } = { x: snap(p.x), y: snap(p.y) };
     let bestDist = MAGNETIC_SNAP / zoom;
@@ -636,7 +675,7 @@
     const cat = getCatalogItem(currentPlacingId);
     if (!cat) return;
 
-    const wallSnap = snapFurnitureToWall(mousePos, currentPlacingId, currentPlacingRotation);
+    const wallSnap = snapFurnitureToWall(mousePos, { width: cat.width, depth: cat.depth }, currentPlacingRotation);
     placementWallSnap = wallSnap;
 
     const pos = wallSnap ? wallSnap.position : mousePos;
@@ -1954,7 +1993,7 @@
     let found = false;
     function expand(x: number, y: number) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; found = true; }
     for (const w of currentFloor.walls) { expand(w.start.x, w.start.y); expand(w.end.x, w.end.y); if (w.curvePoint) expand(w.curvePoint.x, w.curvePoint.y); }
-    for (const fi of currentFloor.furniture) { const cat = getCatalogItem(fi.catalogId); if (!cat) continue; const r = Math.hypot((fi.width ?? cat.width) / 2, (fi.depth ?? cat.depth) / 2); expand(fi.position.x - r, fi.position.y - r); expand(fi.position.x + r, fi.position.y + r); }
+    for (const fi of currentFloor.furniture) { const fs = furnitureSize(fi); const r = Math.hypot(fs.width / 2, fs.depth / 2); expand(fi.position.x - r, fi.position.y - r); expand(fi.position.x + r, fi.position.y + r); }
     if (currentFloor.stairs) for (const st of currentFloor.stairs) { const fp = stairFootprint(st); expand(st.position.x - fp.width / 2, st.position.y - fp.depth / 2); expand(st.position.x + fp.width / 2, st.position.y + fp.depth / 2); }
     if (currentFloor.columns) for (const col of currentFloor.columns) { const r = col.diameter / 2; expand(col.position.x - r, col.position.y - r); expand(col.position.x + r, col.position.y + r); }
     if (!found) return null;
@@ -2007,11 +2046,8 @@
     }
     // Furniture
     for (const fi of currentFloor.furniture) {
-      const cat = getCatalogItem(fi.catalogId);
-      if (!cat) continue;
-      const hw = (fi.width ?? cat.width) / 2;
-      const hd = (fi.depth ?? cat.depth) / 2;
-      const r = Math.hypot(hw, hd); // conservative radius for rotated items
+      const fs = furnitureSize(fi);
+      const r = Math.hypot(fs.width / 2, fs.depth / 2); // conservative radius for rotated items
       expand(fi.position.x - r, fi.position.y - r);
       expand(fi.position.x + r, fi.position.y + r);
     }
@@ -2322,7 +2358,8 @@
     // Column and stair placement moved earlier (before select-mode handlers)
 
     if (tool === 'furniture' && currentPlacingId) {
-      const wallSnap = snapFurnitureToWall(wp, currentPlacingId, currentPlacingRotation);
+      const placingCat = getCatalogItem(currentPlacingId);
+      const wallSnap = placingCat ? snapFurnitureToWall(wp, { width: placingCat.width, depth: placingCat.depth }, currentPlacingRotation) : null;
       const pos = wallSnap ? wallSnap.position : { x: snap(wp.x), y: snap(wp.y) };
       const rot = wallSnap ? wallSnap.rotation : currentPlacingRotation;
       const id = addFurniture(currentPlacingId, pos);
@@ -2421,9 +2458,9 @@
         if (fi) {
           draggingHandle = handle;
           handleDragStart = { ...wp };
-          handleOrigScale = { x: fi.scale?.x ?? 1, y: fi.scale?.y ?? 1 };
           handleOrigRotation = fi.rotation;
-          beginPlacement('handle', e);
+          if (handle !== 'rotate') beginResize(fi, handle, wp);
+          beginPlacement(handle === 'rotate' ? 'rotate' : 'handle', e);
           return;
         }
       }
@@ -2757,12 +2794,8 @@
       if (wall) {
         // Free movement in all directions
         {
-          const mdx = mousePos.x - draggingWallParallel.startMousePos.x;
-          const mdy = mousePos.y - draggingWallParallel.startMousePos.y;
-          // Snap delta to grid
-          const snapStep = currentSnapToGrid ? currentGridSize : SNAP;
-          const dx = Math.round(mdx / snapStep) * snapStep;
-          const dy = Math.round(mdy / snapStep) * snapStep;
+          const dx = snapDelta(mousePos.x - draggingWallParallel.startMousePos.x);
+          const dy = snapDelta(mousePos.y - draggingWallParallel.startMousePos.y);
           // Set wall positions from original + offset
           const newStart = {
             x: draggingWallParallel.origStart.x + dx,
@@ -2785,9 +2818,8 @@
       }
     }
     if (draggingMultiSelect && currentFloor) {
-      const mSnapStep = currentSnapToGrid ? currentGridSize : SNAP;
-      const dx = Math.round((mousePos.x - draggingMultiSelect.startMousePos.x) / mSnapStep) * mSnapStep;
-      const dy = Math.round((mousePos.y - draggingMultiSelect.startMousePos.y) / mSnapStep) * mSnapStep;
+      const dx = snapDelta(mousePos.x - draggingMultiSelect.startMousePos.x);
+      const dy = snapDelta(mousePos.y - draggingMultiSelect.startMousePos.y);
       for (const [id, orig] of draggingMultiSelect.origPositions) {
         if (orig.start && orig.end) {
           // Wall — move both endpoints
@@ -2804,9 +2836,8 @@
       }
     }
     if (draggingRoomId && currentFloor && roomDragStartPositions.size > 0) {
-      const rSnapStep = currentSnapToGrid ? currentGridSize : SNAP;
-      const dx = Math.round((mousePos.x - roomDragStartMouse.x) / rSnapStep) * rSnapStep;
-      const dy = Math.round((mousePos.y - roomDragStartMouse.y) / rSnapStep) * rSnapStep;
+      const dx = snapDelta(mousePos.x - roomDragStartMouse.x);
+      const dy = snapDelta(mousePos.y - roomDragStartMouse.y);
       for (const [wid, orig] of roomDragStartPositions) {
         moveWallEndpoint(wid, 'start', { x: orig.start.x + dx, y: orig.start.y + dy });
         moveWallEndpoint(wid, 'end', { x: orig.end.x + dx, y: orig.end.y + dy });
@@ -2842,38 +2873,8 @@
               angle = Math.round(angle / 15) * 15;
             }
             setFurnitureRotation(currentSelectedId, ((angle % 360) + 360) % 360);
-          } else {
-            // Resize: compute delta in furniture-local coords
-            const dx = mousePos.x - fi.position.x;
-            const dy = mousePos.y - fi.position.y;
-            const ang = -(fi.rotation * Math.PI) / 180;
-            const localX = dx * Math.cos(ang) - dy * Math.sin(ang);
-            const localY = dx * Math.sin(ang) + dy * Math.cos(ang);
-            const minScale = 10 / Math.max(cat.width, cat.depth); // 10cm minimum
-            let newSx = fi.scale?.x ?? 1;
-            let newSy = fi.scale?.y ?? 1;
-            const isEdge = ['resize-t', 'resize-b', 'resize-l', 'resize-r'].includes(draggingHandle);
-            const resizesX = !isEdge || draggingHandle === 'resize-l' || draggingHandle === 'resize-r';
-            const resizesY = !isEdge || draggingHandle === 'resize-t' || draggingHandle === 'resize-b';
-            if (resizesX) {
-              newSx = Math.abs(localX * 2) / cat.width;
-              newSx = Math.max(minScale, Math.round(newSx * 20) / 20);
-            }
-            if (resizesY) {
-              newSy = Math.abs(localY * 2) / cat.depth;
-              newSy = Math.max(minScale, Math.round(newSy * 20) / 20);
-            }
-            // Shift: maintain aspect ratio
-            if (shiftDown && resizesX && resizesY) {
-              const origRatio = (handleOrigScale.x * cat.width) / (handleOrigScale.y * cat.depth);
-              const currentRatio = (newSx * cat.width) / (newSy * cat.depth);
-              if (currentRatio > origRatio) {
-                newSy = (newSx * cat.width) / (origRatio * cat.depth);
-              } else {
-                newSx = (newSy * cat.depth * origRatio) / cat.width;
-              }
-            }
-            scaleFurniture(currentSelectedId, { x: newSx, y: newSy });
+          } else if (resizeStart) {
+            applyResize(mousePos);
           }
         }
       }
@@ -2914,7 +2915,7 @@
       const basePos = { x: mousePos.x - dragOffset.x, y: mousePos.y - dragOffset.y };
       const fi = currentFloor?.furniture.find(f => f.id === draggingFurnitureId);
       if (fi) {
-        const wallSnap = snapFurnitureToWall(basePos, fi.catalogId, fi.rotation);
+        const wallSnap = snapFurnitureToWall(basePos, furnitureSize(fi), fi.rotation);
         if (wallSnap) {
           moveFurniture(draggingFurnitureId, wallSnap.position);
           setFurnitureRotation(draggingFurnitureId, wallSnap.rotation);
@@ -3279,6 +3280,7 @@
 
   function onKeyDown(e: KeyboardEvent) {
     shiftDown = e.shiftKey;
+    altDown = e.altKey;
     if (e.code === 'Space') { spaceDown = true; e.preventDefault(); return; }
 
     // Exact-length entry while drawing a wall (issue #6):
@@ -3507,7 +3509,10 @@
     if (handled) return;
 
     if (e.key === 's' || e.key === 'S') {
-      projectSettings.update(s => ({ ...s, snapToGrid: !s.snapToGrid }));
+      // The master snap switch — the same one the toolbar and the status bar
+      // toggle. It used to flip `snapToGrid`, which only changed the grid step
+      // from 25cm to 10cm, so "Snap: off" still snapped.
+      snapEnabled.update(v => !v);
     }
     if (e.key === 'g' || e.key === 'G') {
       showGrid = !showGrid;
@@ -3541,6 +3546,7 @@
 
   function onKeyUp(e: KeyboardEvent) {
     shiftDown = e.shiftKey;
+    altDown = e.altKey;
     if (e.code === 'Space') spaceDown = false;
   }
 
@@ -3958,6 +3964,7 @@
     <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 bg-slate-800/90 text-white text-xs font-medium px-3.5 py-1.5 rounded-full shadow-lg pointer-events-none flex items-center gap-1.5">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg>
       <span>{placementHintText}</span>
+      {#if placementDetail}<span class="font-semibold tabular-nums">{placementDetail}</span>{/if}
       <span class="max-md:hidden opacity-70">— release to place, Esc to cancel</span>
     </div>
   {/if}
@@ -4084,8 +4091,8 @@
     <button class="hover:text-gray-700" onclick={() => showGrid = !showGrid} title="Toggle Grid (G)">
       {showGrid ? '▦' : '▢'} Grid
     </button>
-    <button class="hover:text-gray-700" onclick={() => projectSettings.update(s => ({ ...s, snapToGrid: !s.snapToGrid }))} title="Toggle Snap to Grid (S)">
-      {currentSnapToGrid ? '🧲' : '↔'} Snap
+    <button class="hover:text-gray-700" onclick={() => snapEnabled.update(v => !v)} title="Toggle snapping — grid, walls and dimensions (S)">
+      {currentSnapEnabled ? '🧲' : '↔'} Snap
     </button>
     <button class="hover:text-gray-700" onclick={() => layerVisibility.update(v => ({ ...v, furniture: !v.furniture }))} title="Toggle Furniture">
       {showFurniture ? '🪑' : '👻'} Furniture
