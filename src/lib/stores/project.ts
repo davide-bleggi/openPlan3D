@@ -111,6 +111,25 @@ export function endUndoGroup(description?: string) {
   }
 }
 
+/** Abandon the open undo group and restore the state captured at beginUndoGroup().
+ *  Used to back out of an in-progress gesture (Escape while dragging) — the
+ *  document returns to how it looked before the drag and no undo entry is added.
+ *  Unwinds nested groups too: a cancelled gesture cancels the whole thing. */
+export function cancelUndoGroup() {
+  if (undoGroupDepth <= 0) return;
+  undoGroupDepth = 0;
+  const snap = undoGroupSnapshot;
+  undoGroupSnapshot = null;
+  _nextDescription = '';
+  resetCoalescing();
+  if (snap !== null) currentProject.set(reviveDates(JSON.parse(snap)));
+}
+
+/** True while an undo group is open — i.e. individual mutations are being batched. */
+export function isUndoGroupOpen(): boolean {
+  return undoGroupDepth > 0;
+}
+
 function snapshot(description?: string, coalesceKey?: string) {
   // If inside an undo group, skip — the group handles the snapshot
   if (undoGroupDepth > 0) return;
@@ -285,12 +304,6 @@ export function moveFurniture(id: string, position: Point) {
   }
 }
 
-/** Snapshot the current state before a drag begins (call once at drag start).
- *  Alias for beginDrag() for backward compatibility. */
-export function commitFurnitureMove() {
-  snapshot('Moved furniture');
-}
-
 export function rotateFurniture(id: string, angle: number) {
   mutate((f) => {
     const item = f.furniture.find((fi) => fi.id === id);
@@ -298,20 +311,56 @@ export function rotateFurniture(id: string, angle: number) {
   }, 'Rotated furniture');
 }
 
+/** Set an absolute rotation. Called once per pointer move while a wall-snapped
+ *  item is dragged, so it coalesces: without a key every move would stringify
+ *  the whole project onto the undo stack. */
 export function setFurnitureRotation(id: string, angle: number) {
   mutate((f) => {
     const item = f.furniture.find((fi) => fi.id === id);
     if (item) item.rotation = ((angle % 360) + 360) % 360;
-  });
+  }, undefined, coalesceKeyFor('furniture', id, { rotation: angle }));
 }
 
+/**
+ * Resize a placed item during a handle drag.
+ *
+ * Writes real centimetre dimensions into `width`/`depth` and normalises `scale`
+ * to ±1 (the sign is kept, it mirrors the icon). Effective size is
+ * `(width ?? catalog.width) * |scale.x|` everywhere, so folding the scale into
+ * the dimensions leaves the item exactly where it was drawn while making the
+ * number in the properties panel the same number the handles produce.
+ *
+ * `position` moves with it: a resize pivots on the opposite corner/edge, so the
+ * centre shifts by half the size change. No undo snapshot — the gesture's undo
+ * group covers the whole drag.
+ */
+export function resizeFurniture(id: string, size: { width: number; depth: number }, position: Point) {
+  const p = get(currentProject);
+  if (!p) return;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  const item = floor?.furniture.find((fi) => fi.id === id);
+  if (!item) return;
+  item.width = size.width;
+  item.depth = size.depth;
+  item.scale = {
+    x: Math.sign(item.scale?.x ?? 1) || 1,
+    y: Math.sign(item.scale?.y ?? 1) || 1,
+    z: item.scale?.z ?? 1,
+  };
+  item.position = position;
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
+
+/** Set an absolute scale. Called once per pointer move while a resize handle is
+ *  dragged — coalesced for the same reason as setFurnitureRotation. */
 export function scaleFurniture(id: string, scale: { x: number; y: number }) {
   mutate((f) => {
     const fi = f.furniture.find((item) => item.id === id);
     if (fi) {
       fi.scale = { x: Math.max(0.2, scale.x), y: Math.max(0.2, scale.y), z: fi.scale.z };
     }
-  });
+  }, undefined, coalesceKeyFor('furniture', id, { scale }));
 }
 
 export function removeFurniture(id: string) {

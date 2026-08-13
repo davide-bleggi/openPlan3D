@@ -250,3 +250,40 @@ export function getCatalogItem(id: string): FurnitureDef | undefined {
 }
 
 export const furnitureCategories = [...new Set(furnitureCatalog.map(f => f.category))];
+
+/** Minimal shape of a placed item — avoids importing the full model type here. */
+interface PlacedItem {
+  catalogId: string;
+  width?: number;
+  depth?: number;
+  scale?: { x: number; y: number };
+}
+
+/**
+ * Base footprint of a placed item in cm: its own width/depth overrides, or the
+ * catalog defaults. This is what `scale` multiplies.
+ */
+export function furnitureBaseSize(item: PlacedItem): { width: number; depth: number } {
+  const cat = getCatalogItem(item.catalogId);
+  return {
+    width: item.width ?? cat?.width ?? 60,
+    depth: item.depth ?? cat?.depth ?? 60,
+  };
+}
+
+/**
+ * Effective on-plan footprint of a placed item in cm.
+ *
+ * The single formula the renderer, the hit tests, the selection handles, the
+ * resize maths and the wall snapping must all agree on. They used to disagree:
+ * drawing honoured `item.width`/`item.depth` while hit testing and the resize
+ * handles used the raw catalog size, so as soon as an item's dimensions were
+ * edited its handles no longer sat on the shape you could see.
+ */
+export function furnitureSize(item: PlacedItem): { width: number; depth: number } {
+  const base = furnitureBaseSize(item);
+  return {
+    width: base.width * Math.abs(item.scale?.x ?? 1),
+    depth: base.depth * Math.abs(item.scale?.y ?? 1),
+  };
+}

@@ -8,7 +8,7 @@ import type { Room } from '$lib/models/types';
 import type { CanvasState } from '$lib/utils/canvasInteraction';
 import type { ProjectSettings } from '$lib/stores/settings';
 import { formatLength, formatArea } from '$lib/stores/settings';
-import { getCatalogItem } from '$lib/utils/furnitureCatalog';
+import { getCatalogItem, furnitureSize } from '$lib/utils/furnitureCatalog';
 import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
 import { getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
 import { getWallTextureCanvas, getFloorTextureCanvas } from '$lib/utils/textureGenerator';
@@ -933,8 +933,9 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
   const s = wts(cs, item.position.x, item.position.y);
   const sx = item.scale?.x ?? 1;
   const sy = item.scale?.y ?? 1;
-  const w = (item.width ?? cat.width) * Math.abs(sx) * zoom;
-  const d = (item.depth ?? cat.depth) * Math.abs(sy) * zoom;
+  const size = furnitureSize(item);
+  const w = size.width * zoom;
+  const d = size.depth * zoom;
   const angle = (item.rotation * Math.PI) / 180;
 
   ctx.save();
