@@ -59,6 +59,12 @@ html.dark input::placeholder, html.dark textarea::placeholder {
 /* Hover states */
 html.dark .hover\:bg-gray-50:hover { background-color: #374151 !important; }
 html.dark .hover\:bg-gray-100:hover { background-color: #374151 !important; }
+/* Darkening the text on hover is a light-theme idea: on the dark hover
+   background above it lands the label on top of its own colour and the text
+   reads as blank. Brighten instead. */
+html.dark .hover\:text-gray-600:hover { color: #e5e7eb !important; }
+html.dark .hover\:text-gray-700:hover { color: #f3f4f6 !important; }
+html.dark .hover\:text-gray-800:hover { color: #f9fafb !important; }
 
 /* Sidebar and panels */
 html.dark .bg-slate-50 { background-color: #1e293b !important; }
