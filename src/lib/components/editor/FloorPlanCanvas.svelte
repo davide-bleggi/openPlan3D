@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, cancelUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden } from '$lib/stores/project';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, cancelUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden, showGrid, showRulers, showMinimap, layerPanelOpen, fitViewRequest } from '$lib/stores/project';
   import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation, CustomEntourageDef } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
@@ -40,6 +40,9 @@
   $effect(() => { canvasZoom.set(zoom); });
   $effect(() => { canvasCamX.set(camX); });
   $effect(() => { canvasCamY.set(camY); });
+  // Display toggles driven from the shared bottom bar — nothing else touches the
+  // canvas when they flip, so the render loop has to be told to redraw.
+  $effect(() => { void $showGrid; void $showRulers; void $showMinimap; markDirty(); });
 
   // Wall drawing state
   let wallStart: Point | null = $state(null);
@@ -98,17 +101,12 @@
   let draggingTextAnnotationId: string | null = $state(null);
   let textAnnotationDragOffset: Point = { x: 0, y: 0 };
 
-  // Grid toggle
-  let showGrid = $state(true);
-
-  // Ruler toggle
-  let showRulers = $state(true);
+  // Grid / ruler / mini-map / layer-panel toggles live in the store: the bottom
+  // bar that drives them is shared with the 3D view and sits outside this canvas.
 
   // Layer visibility toggles
   let layerVis = $state({ walls: true, doors: true, windows: true, furniture: true, stairs: true, columns: true, guides: true, measurements: true, annotations: true, entourage: true });
-  // Sync showFurnitureStore ↔ layerVisibility.furniture
   let showFurniture = $derived(layerVis.furniture);
-  $effect(() => { showFurnitureStore.set(layerVis.furniture); });
   let showDoors = $derived(layerVis.doors);
   let showWindows = $derived(layerVis.windows);
   let showRoomLabels = $state(true);
@@ -124,8 +122,6 @@
     showDimensions = s.showDimensions;
   });
   let showStairs = $derived(layerVis.stairs);
-  let showLayerPanel = $state(false);
-  let showMinimap = $state(true);
   let minimapCanvas: HTMLCanvasElement;
   const RULER_SIZE = 24;
 
@@ -555,7 +551,7 @@
   }
 
   function drawGrid() {
-    if (!ctx || !showGrid) return;
+    if (!ctx || !$showGrid) return;
     const step = (currentSnapToGrid ? currentGridSize : GRID) * zoom;
     if (step < 4) return;
 
@@ -966,7 +962,7 @@
 
   function drawSnapPoints() {
     if (!currentFloor) return;
-    _drawSnapPoints(getCS(), currentFloor, showGrid);
+    _drawSnapPoints(getCS(), currentFloor, $showGrid);
   }
 
   function drawRooms() {
@@ -1057,7 +1053,7 @@
   }
 
   function drawRulers() {
-    if (!ctx || !showRulers) return;
+    if (!ctx || !$showRulers) return;
     const R = RULER_SIZE;
     const fontSize = 9;
     const isImperial = dimSettings.units === 'imperial';
@@ -1938,6 +1934,14 @@
     const unsub12 = calibrationMode.subscribe((v) => { isCalibrating = v; markDirty(); });
     const unsub13 = calibrationPoints.subscribe((pts) => { calPoints = pts; markDirty(); });
     const unsub_multi = selectedElementIds.subscribe((ids) => { currentSelectedIds = ids; markDirty(); });
+    // "Fit" in the shared bottom bar — the store only carries a counter, so skip
+    // the value the subscription replays on mount and fit on later bumps only.
+    let lastFitRequest: number | null = null;
+    const unsub_fit = fitViewRequest.subscribe((n) => {
+      const first = lastFitRequest === null;
+      lastFitRequest = n;
+      if (!first) zoomToFit();
+    });
     const unsub_elevopen = elevationWallId.subscribe((id) => { elevationOpen = !!id; markDirty(); });
     const unsub_elevpick = elevationPickMode.subscribe((v) => { pickingElevation = v; markDirty(); });
     const unsub14 = activeFloor.subscribe((f) => {
@@ -1983,7 +1987,7 @@
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
-    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub_elevopen(); unsub_elevpick(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
+    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub_fit(); unsub_elevopen(); unsub_elevpick(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
   });
 
   /** Compute world bounding box of all elements */
@@ -2002,7 +2006,7 @@
   }
 
   function drawMinimap() {
-    if (!showMinimap || !minimapCanvas || !currentFloor) return;
+    if (!$showMinimap || !minimapCanvas || !currentFloor) return;
     _drawMinimap(getCS(), minimapCanvas, currentFloor, getWorldBBox);
   }
 
@@ -3515,7 +3519,7 @@
       snapEnabled.update(v => !v);
     }
     if (e.key === 'g' || e.key === 'G') {
-      showGrid = !showGrid;
+      $showGrid = !$showGrid;
     }
     if (e.key === 'm' || e.key === 'M') {
       measuring = !measuring;
@@ -4053,63 +4057,19 @@
     </div>
   {/if}
   <!-- Mini-map -->
-  {#if showMinimap && currentFloor && currentFloor.walls.length > 0}
+  {#if $showMinimap && currentFloor && currentFloor.walls.length > 0}
     <canvas
       bind:this={minimapCanvas}
       width="180"
       height="120"
-      class="absolute bottom-10 right-2 rounded-lg shadow-lg border border-gray-300 cursor-crosshair bg-white max-md:hidden"
+      class="absolute bottom-2 right-2 rounded-lg shadow-lg border border-gray-300 cursor-crosshair bg-white max-md:hidden"
       style="z-index: 15;"
       onclick={onMinimapClick}
     ></canvas>
   {/if}
-  <div class="absolute bottom-2 right-2 bg-white/80 rounded px-2 py-1 text-xs text-gray-500 flex gap-3">
-    {#if detectedRooms.length > 0}
-      <span>{detectedRooms.length} room{detectedRooms.length !== 1 ? 's' : ''}</span>
-      <span>{formatArea(detectedRooms.reduce((s, r) => s + r.area, 0), $projectSettings.units)}</span>
-      <span class="text-gray-300">|</span>
-    {/if}
-    {#if currentFloor}
-      <span>{currentFloor.walls.length} wall{currentFloor.walls.length !== 1 ? 's' : ''}</span>
-      {#if currentFloor.doors.length > 0}
-        <span>{currentFloor.doors.length} door{currentFloor.doors.length !== 1 ? 's' : ''}</span>
-      {/if}
-      {#if currentFloor.windows.length > 0}
-        <span>{currentFloor.windows.length} window{currentFloor.windows.length !== 1 ? 's' : ''}</span>
-      {/if}
-      {#if currentFloor.furniture.length > 0}
-        <span>{currentFloor.furniture.length} object{currentFloor.furniture.length !== 1 ? 's' : ''}</span>
-      {/if}
-      <span class="text-gray-300">|</span>
-    {/if}
-    {#if currentSelectedIds.size > 1}
-      <span class="text-blue-600 font-medium">{currentSelectedIds.size} selected</span>
-      <span class="text-gray-300">|</span>
-    {/if}
-    <span>Zoom: {Math.round(zoom * 100)}%</span>
-    <button class="hover:text-gray-700" onclick={() => zoomToFit()} title="Zoom to Fit (F)">⊞ Fit</button>
-    <button class="hover:text-gray-700" onclick={() => showGrid = !showGrid} title="Toggle Grid (G)">
-      {showGrid ? '▦' : '▢'} Grid
-    </button>
-    <button class="hover:text-gray-700" onclick={() => snapEnabled.update(v => !v)} title="Toggle snapping — grid, walls and dimensions (S)">
-      {currentSnapEnabled ? '🧲' : '↔'} Snap
-    </button>
-    <button class="hover:text-gray-700" onclick={() => layerVisibility.update(v => ({ ...v, furniture: !v.furniture }))} title="Toggle Furniture">
-      {showFurniture ? '🪑' : '👻'} Furniture
-    </button>
-    <button class="hover:text-gray-700" onclick={() => showLayerPanel = !showLayerPanel} title="Layer Visibility">
-      🗂 Layers
-    </button>
-    <button class="hover:text-gray-700" onclick={() => showRulers = !showRulers} title="Toggle Rulers">
-      {showRulers ? '📏' : '📐'} Rulers
-    </button>
-    <button class="hover:text-gray-700" onclick={() => showMinimap = !showMinimap} title="Toggle Mini-map">
-      {showMinimap ? '🗺' : '🗺'} Map
-    </button>
-  </div>
-  <!-- Layer Visibility Panel -->
-  {#if showLayerPanel}
-    <div class="absolute bottom-12 right-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 text-xs min-w-[160px]">
+  <!-- Layer Visibility Panel — opened from the shared bottom bar -->
+  {#if $layerPanelOpen}
+    <div class="absolute bottom-2 right-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 text-xs min-w-[160px]">
       <div class="font-semibold text-gray-700 mb-2">Layers</div>
       {#each [['walls','Walls'],['doors','Doors'],['windows','Windows'],['furniture','Furniture'],['stairs','Stairs'],['columns','Columns'],['guides','Guides'],['measurements','Measurements']] as [key, label]}
         <label class="flex items-center gap-2 py-0.5 cursor-pointer hover:bg-gray-50 rounded px-1">
