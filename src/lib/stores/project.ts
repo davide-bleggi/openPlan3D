@@ -35,7 +35,6 @@ export const selectedTool = writable<Tool>('select');
 export const snapEnabled = writable<boolean>(true);
 /** When true, left-click drag pans the canvas instead of selecting */
 export const panMode = writable<boolean>(false);
-export const showFurnitureStore = writable<boolean>(true);
 export const selectedElementId = writable<string | null>(null);
 /** Multi-select: set of element IDs currently selected (used alongside selectedElementId for marquee/shift-click) */
 export const selectedElementIds = writable<Set<string>>(new Set());
@@ -1021,9 +1020,29 @@ export const elevationWallId = writable<string | null>(null);
  *  clicked in the plan canvas opens its elevation; empty click / Esc cancels */
 export const elevationPickMode = writable<boolean>(false);
 
-// Zoom store for 2D canvas — shared between FloorPlanCanvas and TopBar
+// Zoom store for 2D canvas — shared between FloorPlanCanvas and the bottom bar
 export const canvasZoom = writable<number>(1);
 // Camera position stores for 2D canvas — used to compute viewport center
 export const canvasCamX = writable<number>(0);
 export const canvasCamY = writable<number>(0);
+
+// --- Bottom bar display toggles ---------------------------------------------
+// The bottom bar is shared by the 2D and 3D views, so the display state it
+// drives lives here rather than inside FloorPlanCanvas. These four are
+// plan-specific (the bar only shows them in 2D) but still need to be reachable
+// from a component that sits outside the canvas.
+export const showGrid = writable<boolean>(true);
+export const showRulers = writable<boolean>(true);
+export const showMinimap = writable<boolean>(true);
+export const layerPanelOpen = writable<boolean>(false);
+
+/** Incremented by the bottom bar's "Fit" button. Whichever view is mounted
+ *  listens and fits its own camera: the 2D canvas zooms to the floor extents,
+ *  the 3D viewer re-frames the model. */
+export const fitViewRequest = writable<number>(0);
+
+/** Ask the active view (2D canvas or 3D scene) to fit its content on screen. */
+export function requestFitView() {
+  fitViewRequest.update((n) => n + 1);
+}
 

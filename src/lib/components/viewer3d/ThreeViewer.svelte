@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
-  import { activeFloor, currentProject, detectedRoomsStore, selectedElementId } from '$lib/stores/project';
+  import { activeFloor, currentProject, detectedRoomsStore, selectedElementId, layerVisibility, fitViewRequest } from '$lib/stores/project';
   import type { Floor, Wall, Room, Stair, Point } from '$lib/models/types';
   import { wallColors, type WallColor } from '$lib/utils/materials';
   import { projectSettings, formatArea } from '$lib/stores/settings';
@@ -1874,6 +1874,9 @@
         model.scale.x *= fi.scale.x;
         model.scale.z *= fi.scale.y;
       }
+      // Tagged so the bottom bar's Furniture toggle can hide these again after
+      // every rebuild without having to know how they were constructed.
+      model.userData.isFurniture = true;
       wallGroup.add(model);
     }
 
@@ -2207,12 +2210,23 @@
     controls.update();
   }
   
+  /** Apply the shared Furniture toggle to the objects tagged during the build. */
+  function applyFurnitureVisibility() {
+    if (!wallGroup) return;
+    const visible = get(layerVisibility).furniture;
+    for (const child of wallGroup.children) {
+      if (child.userData?.isFurniture) child.visible = visible;
+    }
+    markSceneDirty();
+  }
+
   function rebuildScene() {
     if (showAllFloors) {
       buildAllFloorsStacked();
     } else if (currentFloor) {
       buildWalls(currentFloor);
     }
+    applyFurnitureVisibility();
     markSceneDirty();
   }
 
@@ -2443,6 +2457,19 @@
       savedRooms = rooms;
     });
 
+    // Furniture toggle in the shared bottom bar
+    const unsubLayers = layerVisibility.subscribe(() => applyFurnitureVisibility());
+
+    // "Fit" in the shared bottom bar re-frames the whole model. The store only
+    // carries a counter, so ignore the value replayed on subscribe.
+    let fitSubscribed = false;
+    const unsubFit = fitViewRequest.subscribe(() => {
+      if (!fitSubscribed) { fitSubscribed = true; return; }
+      if (!wallGroup) return;
+      autoCenterCameraAllFloors();
+      markSceneDirty();
+    });
+
     // Highlight selected wall in 3D
     // Store original materials so we can restore them (shared materials must not be mutated)
     const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
@@ -2485,6 +2512,8 @@
       resizeObs.disconnect();
       unsub();
       unsubRooms();
+      unsubLayers();
+      unsubFit();
       unsubSel();
       cancelAnimationFrame(animId);
       document.removeEventListener('keydown', onKeyDown, false);
