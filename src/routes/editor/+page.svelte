@@ -35,11 +35,15 @@
   let showHelp = $state(false);
   let showUndoHistory = $state(false);
 
-  // Mobile (< md): BuildPanel becomes an off-canvas drawer toggled by the Tools FAB.
-  let buildPanelOpen = $state(false);
-  // Close the drawer once the user has picked a tool / item so the canvas is usable
-  selectedTool.subscribe(() => { if (buildPanelOpen) buildPanelOpen = false; });
-  placingFurnitureId.subscribe((id) => { if (id && buildPanelOpen) buildPanelOpen = false; });
+  // The build panel floats over the plan as a lateral island. It starts
+  // expanded on desktop and collapsed to its tool rail on phones, where the
+  // screen is too narrow to give the full panel away for free.
+  let buildPanelCollapsed = $state(false);
+  const isPhone = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+  // On phones, fall back to the rail once a tool / item is picked so the plan
+  // is usable again straight away.
+  selectedTool.subscribe(() => { if (isPhone()) buildPanelCollapsed = true; });
+  placingFurnitureId.subscribe((id) => { if (id && isPhone()) buildPanelCollapsed = true; });
 
   // iOS capture handoff (?import=CODE → fetch RoomPlan JSON from Firebase Storage inbox)
   let importingCapture = $state(false);
@@ -111,6 +115,8 @@
   });
 
   onMount(() => {
+    buildPanelCollapsed = isPhone();
+
     (async () => {
       const url = new URL(window.location.href);
 
@@ -166,19 +172,6 @@
   <div class="h-screen flex flex-col overflow-hidden">
     <TopBar />
     <div class="flex flex-1 overflow-hidden">
-      {#if mode === '2d'}
-        <!-- Build panel: inline sidebar on md+, off-canvas drawer on phones -->
-        {#if buildPanelOpen}
-          <div
-            class="md:hidden fixed inset-x-0 top-12 bottom-0 bg-black/40 z-40"
-            onclick={() => buildPanelOpen = false}
-            aria-hidden="true"
-          ></div>
-        {/if}
-        <div class="h-full max-md:fixed max-md:left-0 max-md:top-12 max-md:bottom-0 max-md:h-auto max-md:z-50 max-md:shadow-2xl max-md:transition-transform max-md:duration-200 {buildPanelOpen ? '' : 'max-md:-translate-x-full'}">
-          <BuildPanel />
-        </div>
-      {/if}
       <div class="flex-1 min-w-0 relative">
         {#if mode === '2d'}
           <FloorPlanCanvas />
@@ -186,6 +179,12 @@
           {#if $elevationWallId}
             <!-- Integrated elevation view replaces the plan canvas area (sidebars stay) -->
             <ElevationView />
+          {:else}
+            <!-- Build panel: a floating island over the plan, collapsible to a
+                 tool rail. Kept clear of the corner buttons on desktop. -->
+            <div class="absolute left-2 top-2 bottom-2 md:bottom-14 z-30 flex items-start">
+              <BuildPanel bind:collapsed={buildPanelCollapsed} />
+            </div>
           {/if}
         {:else}
           {#if ThreeViewer}
@@ -203,18 +202,6 @@
     <!-- Status/display bar, shared by the 2D and 3D views -->
     <BottomBar {mode} />
   </div>
-
-  <!-- Tools drawer FAB (mobile only) -->
-  {#if mode === '2d'}
-    <button
-      class="md:hidden fixed bottom-12 left-4 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg active:bg-blue-700 transition-colors z-40 flex items-center justify-center"
-      onclick={() => buildPanelOpen = !buildPanelOpen}
-      title="Tools"
-      aria-label="Toggle tools panel"
-    >
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    </button>
-  {/if}
 
   <!-- Layers toggle button -->
   {#if mode === '2d'}

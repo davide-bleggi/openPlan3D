@@ -12,6 +12,26 @@
   import { createProjectFromRoomPlan, extractRoomJsonFromZip, ORTHO_VERSION } from '$lib/utils/roomplanImport';
   import { currentProject, loadProject } from '$lib/stores/project';
 
+  /**
+   * The build panel floats over the plan as a lateral island rather than
+   * sitting in the layout, so it has two shapes: a collapsed rail with just
+   * the fundamentals, and the full tabbed panel. The owner keeps the state so
+   * it can drive it from the outside (phones collapse it after a pick).
+   */
+  let { collapsed = $bindable(false) }: { collapsed?: boolean } = $props();
+
+  let panelEl = $state<HTMLElement | null>(null);
+
+  const railBtn = 'w-10 h-10 shrink-0 rounded-lg flex items-center justify-center transition-colors';
+  const railOn = 'bg-blue-100 text-blue-700 ring-1 ring-blue-300';
+  const railOff = 'text-gray-600 hover:bg-gray-100';
+
+  /** Open the full panel on a given tab — used by the rail's shortcut buttons. */
+  function expandTo(tab: 'draw' | 'rooms' | 'objects') {
+    activeTab = tab;
+    collapsed = false;
+  }
+
   // AreaSummaryPanel moved to top bar dialog
   let activeTab = $state<'draw' | 'rooms' | 'objects'>('draw');
   let constructionOpen = $state(true);
@@ -283,7 +303,12 @@
   let hoverPos = $state<{ x: number; y: number }>({ x: 0, y: 0 });
   let showPreview = $state(false);
 
+  /** Touch devices fire mouseenter on tap, and the preview would just cover
+   *  the panel it is describing — keep it to real pointers. */
+  const canHover = () => typeof window === 'undefined' || window.matchMedia('(hover: hover)').matches;
+
   function onItemMouseEnter(e: MouseEvent, item: FurnitureDef) {
+    if (!canHover()) return;
     if (hoverTimeout) clearTimeout(hoverTimeout);
     hoveredItem = item;
     updateHoverPos(e);
@@ -302,11 +327,14 @@
   }
 
   function updateHoverPos(e: MouseEvent) {
-    const sidebarRight = 256; // w-64 = 16rem = 256px
+    // The panel floats, so its right edge is wherever it happens to be.
+    const panelRight = panelEl?.getBoundingClientRect().right ?? 256;
     const viewportW = window.innerWidth;
     const tooltipW = 220;
-    // Position to the right of sidebar, or left if no space
-    const x = (sidebarRight + tooltipW + 8) < viewportW ? sidebarRight + 8 : -tooltipW - 8;
+    // Position to the right of the panel, or left of it if there is no room
+    const x = (panelRight + tooltipW + 8) < viewportW
+      ? panelRight + 8
+      : Math.max(8, panelRight - tooltipW - 8);
     // Vertically align near the mouse, clamped to viewport
     const y = Math.min(Math.max(e.clientY - 40, 8), window.innerHeight - 200);
     hoverPos = { x, y };
@@ -330,9 +358,93 @@
   };
 </script>
 
-<div class="w-64 bg-white border-r border-gray-200 flex flex-col h-full overflow-hidden">
+<div
+  bind:this={panelEl}
+  class="flex flex-col max-h-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl {collapsed ? 'w-14' : 'w-64'}"
+>
+{#if collapsed}
+  <!-- Collapsed: the fundamentals only. Everything else is one tap away. -->
+  <div class="flex flex-col items-center gap-1 p-1.5 overflow-y-auto">
+    <button
+      class="{railBtn} {currentTool === 'select' ? railOn : railOff}"
+      onclick={() => setTool('select')}
+      title="Select (V)"
+      aria-label="Select tool"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg>
+    </button>
+    <button
+      class="{railBtn} {currentTool === 'wall' ? railOn : railOff}"
+      onclick={() => setTool('wall')}
+      title="Draw Wall (W)"
+      aria-label="Draw wall"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="8" rx="1"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="17" y1="8" x2="17" y2="16"/></svg>
+    </button>
+    <button
+      class="{railBtn} {currentTool === 'door' ? railOn : railOff}"
+      onclick={() => setDoorType(selectedDoorType)}
+      title="Place Door (D)"
+      aria-label="Place door"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17"/><circle cx="14.5" cy="12" r="1"/></svg>
+    </button>
+    <button
+      class="{railBtn} {currentTool === 'window' ? railOn : railOff}"
+      onclick={() => setWindowType(selectedWindowType)}
+      title="Place Window"
+      aria-label="Place window"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="1"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+    </button>
+    <button
+      class="{railBtn} {isPlacingStair ? railOn : railOff}"
+      onclick={onPlaceStair}
+      title="Add Stairs"
+      aria-label="Add stairs"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 5h-5V2h-3v6h-4V5H7v6H2v3h5v3h3v-3h4v3h3v-6h5z"/></svg>
+    </button>
+    <button
+      class="{railBtn} {currentTool === 'text' ? railOn : railOff}"
+      onclick={() => setTool('text')}
+      title="Text Label (T)"
+      aria-label="Text label tool"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg>
+    </button>
+
+    <div class="w-6 h-px bg-gray-200 my-0.5"></div>
+
+    <button
+      class="{railBtn} {railOff}"
+      onclick={() => expandTo('rooms')}
+      title="Room presets"
+      aria-label="Open room presets"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 13h8M11 3v18"/></svg>
+    </button>
+
+    <button
+      class="{railBtn} {currentPlacing ? railOn : railOff}"
+      onclick={() => expandTo('objects')}
+      title="Objects & furniture"
+      aria-label="Open objects catalog"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4"/><rect x="3" y="11" width="18" height="6" rx="2"/><path d="M6 17v2M18 17v2"/></svg>
+    </button>
+    <button
+      class="{railBtn} {railOff}"
+      onclick={() => collapsed = false}
+      title="More tools"
+      aria-label="Expand tools panel"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+  </div>
+{:else}
   <!-- Tabs -->
-  <div class="flex border-b border-gray-200">
+  <div class="flex border-b border-gray-200 shrink-0">
     <button
       class="flex-1 py-2.5 text-xs font-semibold uppercase tracking-wide {activeTab === 'draw' ? 'text-slate-800 border-b-2 border-blue-500 bg-blue-50' : 'text-gray-500 hover:text-gray-700'}"
       onclick={() => activeTab = 'draw'}
@@ -345,9 +457,17 @@
       class="flex-1 py-2.5 text-xs font-semibold uppercase tracking-wide {activeTab === 'objects' ? 'text-slate-800 border-b-2 border-blue-500 bg-blue-50' : 'text-gray-500 hover:text-gray-700'}"
       onclick={() => activeTab = 'objects'}
     >Objects</button>
+    <button
+      class="w-9 shrink-0 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-50 border-l border-gray-100"
+      onclick={() => collapsed = true}
+      title="Collapse panel"
+      aria-label="Collapse tools panel"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+    </button>
   </div>
 
-  <div class="flex-1 overflow-y-auto p-3">
+  <div class="flex-1 min-h-0 overflow-y-auto p-3">
     {#if activeTab === 'draw'}
       <div class="space-y-1">
         <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">Tools</h3>
@@ -743,6 +863,7 @@
       </div>
     {/if}
   </div>
+{/if}
 </div>
 
 <!-- Furniture Hover Preview Tooltip -->
