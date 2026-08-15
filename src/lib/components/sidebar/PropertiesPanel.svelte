@@ -6,6 +6,7 @@
   import { stairFootprint } from '$lib/utils/stairGeometry';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import { base } from '$app/paths';
+  import { onMount } from 'svelte';
   import type { Floor, Wall, Door, Window as Win, Room, FurnitureItem, Stair, Column, RoomCategory, TextAnnotation } from '$lib/models/types';
 
   let floor = $state<Floor | null>(null);
@@ -48,6 +49,16 @@
   }
 
   let { is3D = false }: { is3D?: boolean } = $props();
+
+  /**
+   * The panel floats over the plan as a lateral island. Collapsed it keeps the
+   * essentials of whatever is selected — the sizes and the one or two actions
+   * reached most often — and hides the rest: colours, textures, materials and
+   * the secondary controls. Phones start collapsed, where the panel otherwise
+   * takes nearly half the height.
+   */
+  let collapsed = $state(false);
+  onMount(() => { collapsed = window.matchMedia('(max-width: 767px)').matches; });
   let wallSideTab = $state<'interior' | 'exterior'>('interior');
   let selectedWall = $derived(floor?.walls?.find(w => w.id === selId) ?? null);
   let selectedDoor = $derived(floor?.doors?.find(d => d.id === selId) ?? null);
@@ -337,8 +348,27 @@
   let hasSelection = $derived(!!selectedWall || !!selectedDoor || !!selectedWindow || !!selectedFurniture || !!selectedRoom || !!selectedStair || !!selectedColumn || !!selectedTextAnnotation || !!selectedEntourage || (!is3D && hasBgImage));
 </script>
 
-<!-- Right sidebar on md+; slides up as a bottom sheet on phones -->
-<div class="{is3D ? 'w-80' : 'w-64'} shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-y-auto p-3 fixed right-0 top-12 bottom-9 z-40 shadow-lg max-md:top-auto max-md:bottom-9 max-md:left-0 max-md:w-full max-md:max-h-[45vh] max-md:border-l-0 max-md:border-t max-md:rounded-t-xl max-md:shadow-2xl" class:hidden={!hasSelection}>
+<!-- Floating island: anchored top-right on md+, a detached sheet on phones.
+     It only grows as tall as it needs, so collapsing it hands height back. -->
+<div
+  class="{is3D ? 'w-80' : 'w-64'} bg-white rounded-xl border border-gray-200 shadow-xl flex flex-col overflow-y-auto p-3 fixed right-2 top-14 z-40 max-h-[calc(100vh-6.25rem)] max-md:top-auto max-md:bottom-11 max-md:left-2 max-md:right-2 max-md:w-auto max-md:max-h-[45vh]"
+  class:hidden={!hasSelection}
+>
+  <!-- Collapse toggle, pinned while the panel scrolls -->
+  <div class="sticky top-0 z-10 flex justify-end bg-white pb-1">
+    <button
+      class="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+      onclick={() => collapsed = !collapsed}
+      title={collapsed ? 'Show all properties' : 'Show essentials only'}
+      aria-label={collapsed ? 'Expand properties panel' : 'Collapse properties panel'}
+      aria-expanded={!collapsed}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d={collapsed ? 'm6 9 6 6 6-6' : 'm18 15-6-6-6 6'} />
+      </svg>
+    </button>
+  </div>
+
   {#if selectedWall}
     <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
       <span class="w-6 h-6 bg-gray-200 rounded flex items-center justify-center text-xs">▭</span>
@@ -365,6 +395,8 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="1"/><line x1="3" y1="18" x2="21" y2="18"/><rect x="7" y="9" width="4" height="4"/><rect x="14" y="10" width="3" height="8"/></svg>
         Elevation
       </button>
+      <!-- Beyond the sizes and the elevation jump: visibility, curve and the two material faces -->
+      {#if !collapsed}
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-500">Visible</span>
         <button
@@ -488,6 +520,7 @@
           </div>
         {/if}
       </div>
+      {/if}
     </div>
 
   {:else if selectedDoor}
@@ -500,6 +533,8 @@
         <span class="text-xs text-gray-500">Width ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedDoor.width)} oninput={onDoorWidth} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Placement along the wall — dragging the door in the plan covers the common case -->
+      {#if !collapsed}
       <label class="block">
         <span class="text-xs text-gray-500">Distance from A ({unitLabel()})</span>
         <input type="number" value={displayValue(doorDistFromA)} oninput={onDoorDistFromA} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -508,6 +543,7 @@
         <span class="text-xs text-gray-500">Distance from B ({unitLabel()})</span>
         <input type="number" value={displayValue(doorDistFromB)} oninput={onDoorDistFromB} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      {/if}
       <label class="block">
         <span class="text-xs text-gray-500">Height ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedDoor.height ?? 210)} oninput={onDoorHeight} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -525,6 +561,8 @@
           <option value="garage">Garage</option>
         </select>
       </label>
+      <!-- Swing: hinge side and which way it opens -->
+      {#if !collapsed}
       {#if selectedDoor.type !== 'opening' && selectedDoor.type !== 'garage'}
       <label class="block">
         <span class="text-xs text-gray-500">Hinge Side</span>
@@ -540,6 +578,7 @@
           <button onclick={() => { if (selectedDoor) updateDoor(selectedDoor.id, { flipSide: true }); }} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {selectedDoor?.flipSide ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">Outward</button>
         </div>
       </label>
+      {/if}
       {/if}
     </div>
 
@@ -563,6 +602,8 @@
         <span class="text-xs text-gray-500">Width ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedWindow.width)} oninput={onWindowWidth} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Placement along the wall — dragging the window in the plan covers the common case -->
+      {#if !collapsed}
       <label class="block">
         <span class="text-xs text-gray-500">Distance from A ({unitLabel()})</span>
         <input type="number" value={displayValue(windowDistFromA)} oninput={onWindowDistFromA} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -571,6 +612,7 @@
         <span class="text-xs text-gray-500">Distance from B ({unitLabel()})</span>
         <input type="number" value={displayValue(windowDistFromB)} oninput={onWindowDistFromB} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      {/if}
       <label class="block">
         <span class="text-xs text-gray-500">Height ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedWindow.height)} oninput={onWindowHeight} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -594,6 +636,8 @@
       >{selectedFurniture.locked ? '🔒 Locked' : '🔓'}</button>
     </h3>
     <div class="space-y-3">
+      <!-- Colour swatches -->
+      {#if !collapsed}
       <!-- Color -->
       <div>
         <div class="flex items-center gap-1 mb-2">
@@ -625,6 +669,7 @@
         </div>
       </div>
       
+      {/if}
       <!-- Dimensions -->
       <label class="block">
         <span class="text-xs text-gray-500">Width ({unitLabel()})</span>
@@ -654,6 +699,8 @@
         />
       </label>
       
+      <!-- Material and the free rotation field — the quarter-turn buttons below cover most turns -->
+      {#if !collapsed}
       <!-- Material -->
       <label class="block">
         <span class="text-xs text-gray-500">Material</span>
@@ -684,6 +731,7 @@
         />
       </label>
 
+      {/if}
       <!-- Rotate / Flip controls -->
       <div class="flex gap-1">
         <button
@@ -697,6 +745,8 @@
           title="Rotate 90° right"
         >↻ 90°</button>
       </div>
+      <!-- Flips and the reset -->
+      {#if !collapsed}
       <div class="flex gap-1">
         <button
           onclick={() => { if (selectedFurniture) { const s = selectedFurniture.scale; updateFurniture(selectedFurniture.id, { scale: { x: s.x * -1, y: s.y, z: s.z } }); } }}
@@ -717,6 +767,7 @@
       >
         Reset to defaults
       </button>
+      {/if}
     </div>
 
   {:else if selectedRoom}
@@ -750,6 +801,8 @@
         <span class="text-xs text-gray-500">Area</span>
         <p class="text-sm text-gray-700">{formatArea(selectedRoom.area, settings.units)}</p>
       </div>
+      <!-- Room colour and the floor material library -->
+      {#if !collapsed}
       <!-- Room Color -->
       <div>
         <span class="text-xs text-gray-500 mb-1.5 block">Room Color{selectedRoom.floorTexture === 'none' ? ' (used as floor color)' : ''}</span>
@@ -803,6 +856,7 @@
           {/each}
         </div>
       </div>
+      {/if}
     </div>
 
   {:else if selectedEntourage}
@@ -811,10 +865,13 @@
       Entourage
     </h3>
     <div class="space-y-3">
+      <!-- Which symbol this is — read-only -->
+      {#if !collapsed}
       <div>
         <span class="text-xs text-gray-500">Symbol</span>
         <p class="text-sm text-gray-700">{getEntourageDef(selectedEntourage.defId)?.name ?? 'Custom image'}</p>
       </div>
+      {/if}
       <label class="block">
         <span class="text-xs text-gray-500">Width ({unitLabel()})</span>
         <input type="number" value={displayValue(Math.round(selectedEntourage.width))} oninput={(e) => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { width: Math.max(1, inputToCm(Number((e.target as HTMLInputElement).value)) || 1) }); }} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -823,10 +880,13 @@
         <span class="text-xs text-gray-500">Rotation (°)</span>
         <input type="number" value={Math.round(selectedEntourage.rotation || 0)} oninput={(e) => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { rotation: Number((e.target as HTMLInputElement).value) || 0 }); }} step="15" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Opacity -->
+      {#if !collapsed}
       <label class="block">
         <span class="text-xs text-gray-500">Opacity ({Math.round((selectedEntourage.opacity ?? 1) * 100)}%)</span>
         <input type="range" min="0.1" max="1" step="0.05" value={selectedEntourage.opacity ?? 1} oninput={(e) => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { opacity: Number((e.target as HTMLInputElement).value) }); }} class="w-full" />
       </label>
+      {/if}
       <div class="flex gap-2">
         <button onclick={() => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { locked: !selectedEntourage.locked }); }} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {selectedEntourage.locked ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-200 hover:bg-gray-50'}">{selectedEntourage.locked ? '🔒 Locked' : '🔓 Unlocked'}</button>
         <button onclick={() => { if (selectedEntourage) { removeElement(selectedEntourage.id); selectedElementId.set(null); } }} class="flex-1 px-2 py-1.5 border border-red-200 text-red-600 rounded text-sm hover:bg-red-50 transition-colors">Delete</button>
@@ -861,6 +921,8 @@
           <input type="number" value={displayValue(selectedStair.depth)} oninput={(e) => updateStair(selectedStair!.id, { depth: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
         </label>
       {/if}
+      <!-- Risers, direction and rotation -->
+      {#if !collapsed}
       <label class="block">
         <span class="text-xs text-gray-500">Risers</span>
         <input type="number" value={selectedStair.riserCount} min="3" max="30" oninput={(e) => updateStair(selectedStair!.id, { riserCount: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -876,6 +938,7 @@
         <span class="text-xs text-gray-500">Rotation (degrees)</span>
         <input type="number" value={selectedStair.rotation} oninput={(e) => updateStair(selectedStair!.id, { rotation: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      {/if}
     </div>
   {:else if selectedColumn}
     <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
@@ -898,6 +961,8 @@
         <span class="text-xs text-gray-500">Height ({unitLabel()})</span>
         <input type="number" value={displayValue(selectedColumn.height)} min="50" max="1000" oninput={(e) => updateColumn(selectedColumn!.id, { height: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Colour and rotation -->
+      {#if !collapsed}
       <div>
         <span class="text-xs text-gray-500 mb-1.5 block">Color</span>
         <div class="grid grid-cols-5 gap-1.5 mb-2">
@@ -921,6 +986,7 @@
           <input type="number" value={selectedColumn.rotation} oninput={(e) => updateColumn(selectedColumn!.id, { rotation: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
         </label>
       {/if}
+      {/if}
     </div>
   {:else if selectedTextAnnotation}
     <div class="space-y-3">
@@ -936,6 +1002,8 @@
         <span class="text-xs text-gray-500">Font Size</span>
         <input type="number" value={selectedTextAnnotation.fontSize} min="8" max="72" oninput={(e) => updateTextAnnotation(selectedTextAnnotation!.id, { fontSize: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Colour, rotation and the exact position -->
+      {#if !collapsed}
       <label class="block">
         <span class="text-xs text-gray-500">Color</span>
         <div class="flex items-center gap-2">
@@ -955,6 +1023,7 @@
         <span class="text-xs text-gray-500">Y</span>
         <input type="number" value={Math.round(selectedTextAnnotation.y)} oninput={(e) => updateTextAnnotation(selectedTextAnnotation!.id, { y: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      {/if}
     </div>
   {/if}
 
@@ -974,6 +1043,8 @@
           <span class="text-xs text-gray-500">Scale</span>
           <input type="range" min="0.1" max="5" step="0.05" value={floor.backgroundImage.scale} oninput={(e) => updateBackgroundImage({ scale: Number((e.target as HTMLInputElement).value) })} class="w-full" />
         </label>
+        <!-- Rotation, lock, calibration and removal -->
+        {#if !collapsed}
         <label class="block">
           <span class="text-xs text-gray-500">Rotation</span>
           <input type="number" value={floor.backgroundImage.rotation} oninput={(e) => updateBackgroundImage({ rotation: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
@@ -992,6 +1063,7 @@
           onclick={() => setBackgroundImage(undefined)}
           class="w-full px-2 py-1.5 border border-red-300 rounded text-sm text-red-600 hover:bg-red-50"
         >Remove Image</button>
+        {/if}
       </div>
     </div>
   {/if}
