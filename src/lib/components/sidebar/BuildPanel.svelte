@@ -68,6 +68,8 @@
   function onPresetClick(presetId: string, templateName?: string) {
     const preset = roomPresets.find(p => p.id === presetId);
     if (preset) {
+      // Drops right away — anything still armed would steal the next click.
+      clearPlacementModes();
       let cx = 0, cy = 0;
       canvasCamX.subscribe(v => { cx = v; })();
       canvasCamY.subscribe(v => { cy = v; })();
@@ -202,6 +204,7 @@
       img.onload = () => {
         const aspect = img.naturalHeight / img.naturalWidth || 1;
         const id = addCustomEntourage(file.name.replace(/\.[^.]+$/, ''), dataUrl, aspect);
+        clearPlacementModes();
         placingEntourageId.set(id);
       };
       img.src = dataUrl;
