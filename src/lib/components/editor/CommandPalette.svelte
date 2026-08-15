@@ -1,6 +1,6 @@
 <script lang="ts">
   import { furnitureCatalog } from '$lib/utils/furnitureCatalog';
-  import { selectedTool, snapEnabled, placingFurnitureId, undo, redo, currentProject, viewMode, activeFloor, selectedElementId, selectedElementIds, setWallsHidden } from '$lib/stores/project';
+  import { setActiveTool, snapEnabled, placingFurnitureId, undo, redo, currentProject, viewMode, activeFloor, selectedElementId, selectedElementIds, setWallsHidden } from '$lib/stores/project';
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
   import { exportDXF } from '$lib/utils/cadExport';
   import { get } from 'svelte/store';
@@ -27,12 +27,12 @@
   };
 
   const tools: ResultItem[] = [
-    { id: 't-select', name: 'Select Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => selectedTool.set('select') },
-    { id: 't-wall', name: 'Wall Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => selectedTool.set('wall') },
-    { id: 't-door', name: 'Door Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => selectedTool.set('door') },
-    { id: 't-window', name: 'Window Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => selectedTool.set('window') },
-    { id: 't-furniture', name: 'Furniture Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => selectedTool.set('furniture') },
-    { id: 't-text', name: 'Text Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => selectedTool.set('text') },
+    { id: 't-select', name: 'Select Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => setActiveTool('select') },
+    { id: 't-wall', name: 'Wall Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => setActiveTool('wall') },
+    { id: 't-door', name: 'Door Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => setActiveTool('door') },
+    { id: 't-window', name: 'Window Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => setActiveTool('window') },
+    { id: 't-furniture', name: 'Furniture Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => setActiveTool('furniture') },
+    { id: 't-text', name: 'Text Tool', icon: '🔧', category: 'tool', categoryLabel: '🔧 Tool', action: () => setActiveTool('text') },
   ];
 
   const actions: ResultItem[] = [
@@ -69,7 +69,7 @@
     category: 'furniture' as const,
     categoryLabel: `🪑 ${f.category}`,
     action: () => {
-      selectedTool.set('furniture');
+      setActiveTool('furniture');
       placingFurnitureId.set(f.id);
     },
   }));

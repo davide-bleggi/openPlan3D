@@ -722,6 +722,25 @@ export const detectedRoomsStore = writable<import('$lib/models/types').Room[]>([
 export const placingFurnitureId = writable<string | null>(null);
 /** Rotation angle for furniture being placed */
 export const placingRotation = writable<number>(0);
+
+/**
+ * Every "now click the plan to place X" mode, cleared together.
+ * Arming one of them parks the tool on 'select', so leaving another armed
+ * makes the canvas swallow the next click for the wrong thing.
+ */
+export function clearPlacementModes() {
+  placingStair.set(false);
+  placingColumn.set(false);
+  placingFurnitureId.set(null);
+  placingEntourageId.set(null);
+}
+
+/** Pick a tool. Always use this rather than setting `selectedTool` directly,
+ *  so a pending placement never survives the change. */
+export function setActiveTool(tool: Tool) {
+  clearPlacementModes();
+  selectedTool.set(tool);
+}
 /** Door subtype currently selected for placement */
 export const placingDoorType = writable<Door['type']>('single');
 /** Window subtype currently selected for placement */

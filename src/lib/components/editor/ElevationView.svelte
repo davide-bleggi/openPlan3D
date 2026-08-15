@@ -459,7 +459,7 @@
 {#if wall}
   <!-- Integrated view: fills the canvas area over the plan canvas; right padding
        leaves room for the fixed PropertiesPanel (w-64) that stays visible on md+ -->
-  <div class="absolute inset-0 z-30 bg-white flex flex-col md:pr-64">
+  <div class="absolute inset-0 z-30 bg-white flex flex-col md:pr-[17rem]">
     <!-- Slim header: wall index, cycling, dimensions -->
     <div class="flex items-center gap-2 px-3 h-10 border-b border-gray-200 bg-slate-50 shrink-0">
       <button
