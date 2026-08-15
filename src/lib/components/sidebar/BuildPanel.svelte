@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { selectedTool, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY, placingEntourageId, addCustomEntourage } from '$lib/stores/project';
+  import { selectedTool, setActiveTool, clearPlacementModes, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY, placingEntourageId, addCustomEntourage } from '$lib/stores/project';
   import type { Tool } from '$lib/stores/project';
   import type { Door, Window as Win, CustomEntourageDef } from '$lib/models/types';
   import { entourageCatalog, entourageCategories } from '$lib/utils/entourageCatalog';
@@ -55,8 +55,7 @@
   let optMergeDistance = $state(15);
 
   function setTool(tool: Tool) {
-    selectedTool.set(tool);
-    placingFurnitureId.set(null);
+    setActiveTool(tool);
   }
 
   let currentTool = $state<Tool>('select');
@@ -64,6 +63,7 @@
 
   let currentPlacing = $state<string | null>(null);
   placingFurnitureId.subscribe((id) => { currentPlacing = id; });
+
 
   function onPresetClick(presetId: string, templateName?: string) {
     const preset = roomPresets.find(p => p.id === presetId);
@@ -77,6 +77,7 @@
   }
 
   function onFurnitureClick(item: FurnitureDef) {
+    clearPlacementModes();
     selectedTool.set('furniture');
     placingFurnitureId.set(item.id);
     addToRecent(item.id);
@@ -182,8 +183,10 @@
   let entourageFileInput = $state<HTMLInputElement | null>(null);
 
   function armEntourage(id: string) {
-    placingEntourageId.set(placingEntId === id ? null : id);
-    setTool('select');
+    const arm = placingEntId !== id;
+    clearPlacementModes();
+    selectedTool.set('select');
+    placingEntourageId.set(arm ? id : null);
   }
 
   function onEntourageUpload(e: Event) {
@@ -208,18 +211,28 @@
 
   let isPlacingColumn = $state(false);
   placingColumn.subscribe(v => { isPlacingColumn = v; });
+  let placingColShape = $state<'round' | 'square'>('round');
+  placingColumnShape.subscribe(v => { placingColShape = v; });
+
+  /** Arming a placement mode parks the tool on 'select', so the Select button
+   *  must not claim to be the active one while something is waiting to drop. */
+  let anyPlacing = $derived(isPlacingStair || isPlacingColumn || !!currentPlacing || !!placingEntId);
+  let selectActive = $derived(currentTool === 'select' && !anyPlacing);
 
   function onPlaceStair() {
-    placingStair.set(true);
+    const arm = !isPlacingStair;
+    clearPlacementModes();
     selectedTool.set('select');
-    placingFurnitureId.set(null);
+    placingStair.set(arm);
   }
 
   function onPlaceColumn(shape: 'round' | 'square') {
-    placingColumn.set(true);
-    placingColumnShape.set(shape);
+    // Same shape again disarms; the other shape switches to it.
+    const arm = !(isPlacingColumn && placingColShape === shape);
+    clearPlacementModes();
     selectedTool.set('select');
-    placingFurnitureId.set(null);
+    placingColumnShape.set(shape);
+    placingColumn.set(arm);
   }
 
   function onImportImage() {
@@ -366,7 +379,7 @@
   <!-- Collapsed: the fundamentals only. Everything else is one tap away. -->
   <div class="flex flex-col items-center gap-1 p-1.5 overflow-y-auto">
     <button
-      class="{railBtn} {currentTool === 'select' ? railOn : railOff}"
+      class="{railBtn} {selectActive ? railOn : railOff}"
       onclick={() => setTool('select')}
       title="Select (V)"
       aria-label="Select tool"
@@ -472,10 +485,10 @@
       <div class="space-y-1">
         <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">Tools</h3>
         <button
-          class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors {currentTool === 'select' ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
+          class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors {selectActive ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
           onclick={() => setTool('select')}
         >
-          <div class="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center {currentTool === 'select' ? 'bg-blue-100' : ''}">
+          <div class="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center {selectActive ? 'bg-blue-100' : ''}">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg>
           </div>
           <div class="text-left">
@@ -512,10 +525,10 @@
 
         <div class="flex gap-2">
           <button
-            class="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors {isPlacingColumn ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
+            class="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors {isPlacingColumn && placingColShape === 'round' ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
             onclick={() => onPlaceColumn('round')}
           >
-            <div class="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center {isPlacingColumn ? 'bg-blue-100' : ''}">
+            <div class="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center {isPlacingColumn && placingColShape === 'round' ? 'bg-blue-100' : ''}">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="6"/><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
             </div>
             <div class="text-left">
@@ -523,10 +536,10 @@
             </div>
           </button>
           <button
-            class="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors {isPlacingColumn ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
+            class="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors {isPlacingColumn && placingColShape === 'square' ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
             onclick={() => onPlaceColumn('square')}
           >
-            <div class="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center {isPlacingColumn ? 'bg-blue-100' : ''}">
+            <div class="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center {isPlacingColumn && placingColShape === 'square' ? 'bg-blue-100' : ''}">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
             </div>
             <div class="text-left">

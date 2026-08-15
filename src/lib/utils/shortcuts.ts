@@ -1,4 +1,4 @@
-import { selectedTool, undo, redo, viewMode, selectedElementId, selectedElementIds, removeElement, panMode, beginUndoGroup, endUndoGroup } from '$lib/stores/project';
+import { selectedTool, undo, redo, viewMode, selectedElementId, selectedElementIds, removeElement, panMode, beginUndoGroup, endUndoGroup, setActiveTool } from '$lib/stores/project';
 import { get } from 'svelte/store';
 import { localStore } from '$lib/services/datastore';
 import { currentProject } from '$lib/stores/project';
@@ -39,7 +39,7 @@ export function handleGlobalShortcut(e: KeyboardEvent, ctx: ShortcutContext = {}
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
 
   if (e.key === 'Escape') {
-    selectedTool.set('select');
+    setActiveTool('select');
     selectedElementId.set(null);
     selectedElementIds.set(new Set());
     return true;
@@ -58,11 +58,11 @@ export function handleGlobalShortcut(e: KeyboardEvent, ctx: ShortcutContext = {}
     }
     return true;
   }
-  if (e.key === 'w' || e.key === 'W') { selectedTool.set('wall'); panMode.set(false); return true; }
-  if (e.key === 'd' || e.key === 'D') { selectedTool.set('door'); panMode.set(false); return true; }
-  if (e.key === 'v' || e.key === 'V') { selectedTool.set('select'); panMode.set(false); return true; }
+  if (e.key === 'w' || e.key === 'W') { setActiveTool('wall'); panMode.set(false); return true; }
+  if (e.key === 'd' || e.key === 'D') { setActiveTool('door'); panMode.set(false); return true; }
+  if (e.key === 'v' || e.key === 'V') { setActiveTool('select'); panMode.set(false); return true; }
   if (e.key === 'h' || e.key === 'H') { panMode.set(true); return true; }
-  if (e.key === 't' || e.key === 'T') { selectedTool.set('text'); panMode.set(false); return true; }
+  if (e.key === 't' || e.key === 'T') { setActiveTool('text'); panMode.set(false); return true; }
   if (e.key === 'r' || e.key === 'R') {
     if (ctx.rotateFurniture) ctx.rotateFurniture();
     return true;

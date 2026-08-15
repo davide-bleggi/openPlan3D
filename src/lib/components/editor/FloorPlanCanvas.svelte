@@ -3363,6 +3363,8 @@
       wallStart = null; wallSequenceFirst = null; typedWallLength = '';
       placingFurnitureId.set(null);
       placingEntourageId.set(null);
+      placingStair.set(false);
+      placingColumn.set(false);
       placingRotation.set(0);
       editingTextAnnotationId = null;
       textAnnotationMode = false;
