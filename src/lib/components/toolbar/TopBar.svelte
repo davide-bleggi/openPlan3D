@@ -12,6 +12,7 @@
   import { importRoomPlan } from '$lib/utils/roomplanImport';
   import SettingsDialog from './SettingsDialog.svelte';
   import FloorsDialog from './FloorsDialog.svelte';
+  import AddFloorDialog from './AddFloorDialog.svelte';
   import AreaSummaryPanel from '$lib/components/sidebar/AreaSummaryPanel.svelte';
   import { saveState, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
   import { initVersionHistory, snapshotOnAction } from '$lib/stores/versionHistory';
@@ -19,7 +20,7 @@
 
   let settingsOpen = $state(false);
   let floorsOpen = $state(false);
-  let floorsAutoAdd = $state(false);
+  let addFloorOpen = $state(false);
   let floorMenuOpen = $state(false);
   let floorMenuRef: HTMLDivElement | undefined = $state();
   let areaOpen = $state(false);
@@ -101,16 +102,14 @@
     if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
   }
 
-  /** Open the floor manager on its "new floor" options (empty vs. copy). */
+  /** Creating a floor is its own dialog, separate from the manager. */
   function onAddFloor() {
-    floorsAutoAdd = true;
-    floorsOpen = true;
+    addFloorOpen = true;
     moreOpen = false;
     floorMenuOpen = false;
   }
 
   function openFloorManager() {
-    floorsAutoAdd = false;
     floorsOpen = true;
     moreOpen = false;
     floorMenuOpen = false;
@@ -241,6 +240,7 @@
       if (e.key === 'Escape' && moreOpen) moreOpen = false;
       if (e.key === 'Escape' && floorMenuOpen) floorMenuOpen = false;
       if (e.key === 'Escape' && floorsOpen) floorsOpen = false;
+      if (e.key === 'Escape' && addFloorOpen) addFloorOpen = false;
       if (e.key === 'Escape' && versionHistoryOpen) versionHistoryOpen = false;
       if (e.key === 'Escape' && areaOpen) areaOpen = false;
     }
@@ -587,7 +587,8 @@
 </div>
 
 <SettingsDialog bind:open={settingsOpen} />
-<FloorsDialog bind:open={floorsOpen} bind:autoAdd={floorsAutoAdd} />
+<FloorsDialog bind:open={floorsOpen} />
+<AddFloorDialog bind:open={addFloorOpen} />
 <VersionHistoryPanel bind:open={versionHistoryOpen} />
 
 {#if areaOpen}

@@ -71,8 +71,8 @@
 - [x] Floor selector dropdown (active floor name + count)
 - [x] Add/remove floors
 - [x] Floor counter ("3F")
-- [x] Reorder floors (drag-and-drop or up/down arrows)
-- [x] New floor starts empty or as a copy of the floor below
+- [x] Reorder floors by drag-and-drop
+- [x] New floor starts empty or as a copy of any existing floor
 - [x] Duplicate and rename floors
 
 ### Project Management

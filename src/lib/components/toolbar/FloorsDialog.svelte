@@ -1,17 +1,18 @@
 <script lang="ts">
   /**
-   * Floor manager (issue #15): reorder the stack, rename/duplicate/remove
-   * floors, and add a new floor either empty or as a copy of the one below.
+   * Floor manager (issue #15): reorder the stack by dragging, and rename,
+   * duplicate or remove floors that already exist. Creating a floor lives in
+   * AddFloorDialog, not here.
    *
    * Rows are listed top-of-building first, which is how the stack reads in the
    * 3D view; the store works bottom-to-top, so indices are mirrored on the way in.
    */
-  import { currentProject, setActiveFloor, addFloor, removeFloor, moveFloor, reorderFloors, renameFloor, duplicateFloor } from '$lib/stores/project';
+  import { currentProject, setActiveFloor, removeFloor, moveFloor, reorderFloors, renameFloor, duplicateFloor } from '$lib/stores/project';
   import { orderFloorsBottomUp } from '$lib/utils/floorOrder';
   import { floorNameForLevel } from '$lib/utils/floorStacking';
   import type { Floor } from '$lib/models/types';
 
-  let { open = $bindable(false), autoAdd = $bindable(false) }: { open: boolean; autoAdd?: boolean } = $props();
+  let { open = $bindable(false) }: { open: boolean } = $props();
 
   /** Bottom-to-top, matching the store's ordering. */
   let stack: Floor[] = $derived($currentProject ? orderFloorsBottomUp($currentProject.floors) : []);
@@ -19,27 +20,7 @@
   let rows: Floor[] = $derived([...stack].reverse());
 
   const toStackIndex = (rowIndex: number) => stack.length - 1 - rowIndex;
-
-  // --- adding -------------------------------------------------------------
-  let addOpen = $state(false);
-  let addMode = $state<'empty' | 'copy'>('copy');
-  let addFurniture = $state(false);
-
-  let topFloor: Floor | undefined = $derived(stack[stack.length - 1]);
-
-  // Opened straight from the "+" button: jump to the new-floor options.
-  $effect(() => {
-    if (open && autoAdd) { addOpen = true; autoAdd = false; }
-  });
-
-  function confirmAdd() {
-    addFloor(
-      addMode === 'copy'
-        ? { copyFrom: 'previous', includeFurniture: addFurniture }
-        : {},
-    );
-    addOpen = false;
-  }
+  const labelOf = (floor: Floor) => floor.name || floorNameForLevel(floor.level ?? 0);
 
   // --- renaming -----------------------------------------------------------
   let editingId: string | null = $state(null);
@@ -47,7 +28,7 @@
 
   function startRename(floor: Floor) {
     editingId = floor.id;
-    editingName = floor.name || floorNameForLevel(floor.level ?? 0);
+    editingName = labelOf(floor);
   }
 
   function commitRename() {
@@ -58,50 +39,75 @@
   function onRenameKeydown(e: KeyboardEvent) {
     e.stopPropagation();
     if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-    else if (e.key === 'Escape') { editingId = null; }
+    else if (e.key === 'Escape') editingId = null;
   }
 
-  // --- drag and drop ------------------------------------------------------
+  // --- drag to reorder ----------------------------------------------------
+  // Pointer events rather than HTML5 drag-and-drop, so dragging works with a
+  // finger on a tablet as well as a mouse.
+  let listEl: HTMLUListElement | undefined = $state();
   let dragRow: number | null = $state(null);
-  let dropRow: number | null = $state(null);
+  /** Where the dragged row would land, as a gap index in 0..rows.length. */
+  let dropGap: number | null = $state(null);
+  /** Pixels the dragged row has been pulled from its resting place. */
+  let dragOffset = $state(0);
 
-  function onDragStart(e: DragEvent, rowIndex: number) {
+  let startY = 0;
+  let rowRects: DOMRect[] = [];
+
+  function onPointerDown(e: PointerEvent, rowIndex: number) {
+    if (e.button !== 0 || rows.length < 2 || editingId) return;
+    e.preventDefault();
+    const items = Array.from(listEl?.querySelectorAll('li') ?? []);
+    rowRects = items.map((el) => el.getBoundingClientRect());
+    startY = e.clientY;
     dragRow = rowIndex;
-    e.dataTransfer?.setData('text/plain', String(rowIndex));
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    dropGap = rowIndex;
+    dragOffset = 0;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
 
-  function onDragOver(e: DragEvent, rowIndex: number) {
+  function onPointerMove(e: PointerEvent) {
     if (dragRow === null) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    dropRow = rowIndex;
-  }
-
-  function onDrop(e: DragEvent, rowIndex: number) {
-    e.preventDefault();
-    if (dragRow !== null && dragRow !== rowIndex) {
-      reorderFloors(toStackIndex(dragRow), toStackIndex(rowIndex));
+    dragOffset = e.clientY - startY;
+    // The gap the pointer currently sits in: one past every row whose middle
+    // it has passed.
+    let gap = 0;
+    for (const r of rowRects) {
+      if (e.clientY > r.top + r.height / 2) gap++;
     }
-    dragRow = null;
-    dropRow = null;
+    dropGap = gap;
   }
 
-  function onDragEnd() {
+  function onPointerUp(e: PointerEvent) {
+    if (dragRow === null) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    const gap = dropGap ?? dragRow;
+    // A gap below the dragged row means it lands one index lower once removed.
+    const target = Math.min(rows.length - 1, Math.max(0, gap > dragRow ? gap - 1 : gap));
+    if (target !== dragRow) reorderFloors(toStackIndex(dragRow), toStackIndex(target));
     dragRow = null;
-    dropRow = null;
+    dropGap = null;
+    dragOffset = 0;
+  }
+
+  /** Keyboard equivalent of dragging, for the focused row handle. */
+  function onHandleKeydown(e: KeyboardEvent, floor: Floor) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    moveFloor(floor.id, e.key === 'ArrowUp' ? 1 : -1);
   }
 
   function close() {
     open = false;
-    addOpen = false;
     editingId = null;
+    dragRow = null;
+    dropGap = null;
   }
 
   function onRemove(floor: Floor) {
     if (stack.length <= 1) return;
-    const label = floor.name || floorNameForLevel(floor.level ?? 0);
-    if (confirm(`Remove "${label}" and everything on it?`)) removeFloor(floor.id);
+    if (confirm(`Remove "${labelOf(floor)}" and everything on it?`)) removeFloor(floor.id);
   }
 </script>
 
@@ -126,26 +132,38 @@
       </div>
 
       <p class="px-4 pt-3 text-xs text-gray-500 dark:text-gray-400">
-        Highest floor first — drag a row or use the arrows to change the stacking order.
+        Highest floor first — drag a row by its handle to change the stacking order.
       </p>
 
-      <ul class="flex-1 overflow-y-auto px-2 py-2">
+      <ul class="flex-1 overflow-y-auto px-2 py-2 select-none" bind:this={listEl}>
         {#each rows as fl, i (fl.id)}
-          {@const stackIndex = toStackIndex(i)}
           <li
-            class="flex items-center gap-1 px-2 py-1.5 rounded-lg border transition-colors
+            class="relative flex items-center gap-1 px-2 py-1.5 rounded-lg border transition-colors
               {fl.id === $currentProject?.activeFloorId
                 ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/30'
                 : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-700/50'}
-              {dropRow === i && dragRow !== null && dragRow !== i ? 'ring-2 ring-blue-400' : ''}
-              {dragRow === i ? 'opacity-40' : ''}"
-            draggable="true"
-            ondragstart={(e) => onDragStart(e, i)}
-            ondragover={(e) => onDragOver(e, i)}
-            ondrop={(e) => onDrop(e, i)}
-            ondragend={onDragEnd}
+              {dragRow === i ? 'z-10 shadow-lg bg-white dark:bg-gray-700 opacity-90' : ''}"
+            style={dragRow === i ? `transform: translateY(${dragOffset}px)` : ''}
           >
-            <span class="cursor-grab text-gray-400 px-1 select-none" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
+            {#if dragRow !== null && dragRow !== i && dropGap === i}
+              <span class="absolute -top-px left-2 right-2 h-0.5 bg-blue-500 rounded" aria-hidden="true"></span>
+            {/if}
+            {#if dragRow !== null && dropGap === rows.length && i === rows.length - 1}
+              <span class="absolute -bottom-px left-2 right-2 h-0.5 bg-blue-500 rounded" aria-hidden="true"></span>
+            {/if}
+
+            <button
+              class="px-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 touch-none {rows.length > 1 ? 'cursor-grab' : 'cursor-default opacity-40'}"
+              onpointerdown={(e) => onPointerDown(e, i)}
+              onpointermove={onPointerMove}
+              onpointerup={onPointerUp}
+              onpointercancel={onPointerUp}
+              onkeydown={(e) => onHandleKeydown(e, fl)}
+              title="Drag to reorder (or use ↑ / ↓ when focused)"
+              aria-label="Reorder {labelOf(fl)}"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+            </button>
 
             {#if editingId === fl.id}
               <!-- svelte-ignore a11y_autofocus -->
@@ -163,34 +181,16 @@
                 ondblclick={() => startRename(fl)}
                 title="Click to open, double-click to rename"
               >
-                {fl.name || floorNameForLevel(fl.level ?? 0)}
+                {labelOf(fl)}
                 <span class="text-[10px] text-gray-400 ml-1">L{fl.level ?? 0}</span>
               </button>
             {/if}
 
             <button
-              class="p-1 text-gray-400 hover:text-blue-600 disabled:opacity-25 disabled:hover:text-gray-400"
-              disabled={stackIndex >= stack.length - 1}
-              onclick={() => moveFloor(fl.id, 1)}
-              title="Move up"
-              aria-label="Move {fl.name} up"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-            </button>
-            <button
-              class="p-1 text-gray-400 hover:text-blue-600 disabled:opacity-25 disabled:hover:text-gray-400"
-              disabled={stackIndex <= 0}
-              onclick={() => moveFloor(fl.id, -1)}
-              title="Move down"
-              aria-label="Move {fl.name} down"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <button
               class="p-1 text-gray-400 hover:text-blue-600"
               onclick={() => duplicateFloor(fl.id)}
               title="Duplicate floor"
-              aria-label="Duplicate {fl.name}"
+              aria-label="Duplicate {labelOf(fl)}"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
@@ -199,50 +199,13 @@
               disabled={stack.length <= 1}
               onclick={() => onRemove(fl)}
               title="Remove floor"
-              aria-label="Remove {fl.name}"
+              aria-label="Remove {labelOf(fl)}"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
             </button>
           </li>
         {/each}
       </ul>
-
-      <div class="border-t border-gray-200 dark:border-gray-700 p-3">
-        {#if addOpen}
-          <div class="space-y-2">
-            <div class="text-xs font-bold uppercase tracking-wider text-gray-400">New floor</div>
-            <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
-              <input type="radio" class="mt-1" bind:group={addMode} value="empty" />
-              <span>
-                Start empty
-                <span class="block text-xs text-gray-400">A blank plan.</span>
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200 cursor-pointer">
-              <input type="radio" class="mt-1" bind:group={addMode} value="copy" />
-              <span>
-                Copy of {topFloor?.name || floorNameForLevel(topFloor?.level ?? 0)}
-                <span class="block text-xs text-gray-400">Walls, rooms, doors, windows, columns and stairs — fully independent afterwards.</span>
-              </span>
-            </label>
-            {#if addMode === 'copy'}
-              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200 pl-6 cursor-pointer">
-                <input type="checkbox" bind:checked={addFurniture} />
-                Also copy furniture
-              </label>
-            {/if}
-            <div class="flex justify-end gap-2 pt-1">
-              <button class="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onclick={() => addOpen = false}>Cancel</button>
-              <button class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded font-medium" onclick={confirmAdd}>Add floor</button>
-            </div>
-          </div>
-        {:else}
-          <button
-            class="w-full px-3 py-2 text-sm rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 transition-colors"
-            onclick={() => { addOpen = true; }}
-          >+ Add floor</button>
-        {/if}
-      </div>
     </div>
   </div>
 {/if}
