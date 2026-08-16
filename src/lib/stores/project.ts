@@ -1,5 +1,8 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup, EntourageItem } from '$lib/models/types';
+import { floorNameForLevel, isAutoFloorName } from '$lib/utils/floorStacking';
+import { assignFloorLevels, groundSlotIndex, moveFloorInStack, normalizeFloorOrder, orderFloorsBottomUp, reorderFloorStack } from '$lib/utils/floorOrder';
+import { cloneFloorContents } from '$lib/utils/floorClone';
 
 
 function uid(): string {
@@ -639,21 +642,39 @@ export function updateRoom(id: string, updates: Partial<{ name: string; floorTex
   }, undefined, coalesceKeyFor('room', id, updates));
 }
 
-export function addFloor(name?: string, copyCurrentLayout = false) {
+export interface AddFloorOptions {
+  /** Name for the new floor. Defaults to the conventional name for its level. */
+  name?: string;
+  /**
+   * Id of the floor to copy structure from, or `'previous'` for the floor the
+   * new one lands on top of. Omit to start empty.
+   */
+  copyFrom?: string | 'previous' | null;
+  /** Copy furniture and entourage too (structure only by default). */
+  includeFurniture?: boolean;
+}
+
+/**
+ * Add a floor on top of the stack, optionally as an independent copy of the
+ * floor below it (issue #15). The new floor becomes the active one.
+ */
+export function addFloor(options: AddFloorOptions = {}) {
   const p = get(currentProject);
   if (!p) return;
   snapshot('Added floor');
+  const ordered = normalizeFloorOrder(p.floors);
   // One above the highest existing level — floors.length would reuse a level
   // after a middle floor was removed, stacking two floors at the same height.
-  const level = p.floors.reduce((max, f) => Math.max(max, f.level ?? 0), -1) + 1;
-  const floor: Floor = { id: uid(), name: name ?? `Floor ${level}`, level, walls: [], rooms: [], doors: [], windows: [], furniture: [], stairs: [], columns: [], guides: [], measurements: [], annotations: [], textAnnotations: [], groups: [] };
-  if (copyCurrentLayout) {
-    const cur = p.floors.find(f => f.id === p.activeFloorId);
-    if (cur) {
-      floor.walls = cur.walls.map(w => ({ ...w, id: uid() }));
-    }
+  const level = ordered.reduce((max, f) => Math.max(max, f.level ?? 0), -1) + 1;
+  const floor: Floor = { id: uid(), name: options.name?.trim() || floorNameForLevel(level), level, walls: [], rooms: [], doors: [], windows: [], furniture: [], stairs: [], columns: [], guides: [], measurements: [], annotations: [], textAnnotations: [], groups: [] };
+
+  const sourceId = options.copyFrom === 'previous' ? ordered[ordered.length - 1]?.id : options.copyFrom;
+  const source = sourceId ? ordered.find((f) => f.id === sourceId) : undefined;
+  if (source) {
+    Object.assign(floor, cloneFloorContents(source, { includeFurniture: options.includeFurniture, newId: uid }));
   }
-  p.floors.push(floor);
+
+  p.floors = [...ordered, floor];
   p.activeFloorId = floor.id;
   p.updatedAt = new Date();
   currentProject.set({ ...p });
@@ -663,10 +684,74 @@ export function removeFloor(id: string) {
   const p = get(currentProject);
   if (!p || p.floors.length <= 1) return;
   snapshot('Removed floor');
-  p.floors = p.floors.filter(f => f.id !== id);
+  // Re-level the survivors so the stack stays contiguous and auto-named floors
+  // renumber instead of leaving a gap behind (e.g. "Floor 1, Floor 3").
+  p.floors = normalizeFloorOrder(p.floors.filter(f => f.id !== id));
   if (p.activeFloorId === id) {
     p.activeFloorId = p.floors[0].id;
   }
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
+
+/** Move a floor one step down (`-1`) or up (`+1`) the stack. */
+export function moveFloor(id: string, delta: -1 | 1) {
+  const p = get(currentProject);
+  if (!p) return;
+  const before = orderFloorsBottomUp(p.floors);
+  const from = before.findIndex((f) => f.id === id);
+  if (from === -1 || from + delta < 0 || from + delta >= before.length) return;
+  snapshot(delta > 0 ? 'Moved floor up' : 'Moved floor down');
+  p.floors = moveFloorInStack(p.floors, id, delta);
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
+
+/** Drag-and-drop reorder: move the floor at index `from` to index `to`,
+ *  both counted bottom-to-top in the stack. */
+export function reorderFloors(from: number, to: number) {
+  const p = get(currentProject);
+  if (!p || from === to) return;
+  const ordered = orderFloorsBottomUp(p.floors);
+  if (from < 0 || from >= ordered.length || to < 0 || to >= ordered.length) return;
+  snapshot('Reordered floors');
+  p.floors = reorderFloorStack(p.floors, from, to);
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
+
+/** Rename a floor. An empty name falls back to the level's conventional name. */
+export function renameFloor(id: string, name: string) {
+  const p = get(currentProject);
+  if (!p) return;
+  const floor = p.floors.find((f) => f.id === id);
+  if (!floor) return;
+  const next = name.trim() || floorNameForLevel(floor.level ?? 0);
+  if (next === floor.name) return;
+  snapshot('Renamed floor');
+  floor.name = next;
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
+
+/** Duplicate an existing floor, inserting the copy directly above it. */
+export function duplicateFloor(id: string, includeFurniture = true) {
+  const p = get(currentProject);
+  if (!p) return;
+  const ordered = orderFloorsBottomUp(p.floors);
+  const index = ordered.findIndex((f) => f.id === id);
+  if (index === -1) return;
+  snapshot('Duplicated floor');
+  const source = ordered[index];
+  const copy: Floor = {
+    ...cloneFloorContents(source, { includeFurniture, newId: uid }),
+    id: uid(),
+    name: isAutoFloorName(source.name) ? '' : `${source.name} copy`,
+    level: source.level ?? 0,
+  };
+  ordered.splice(index + 1, 0, copy);
+  p.floors = assignFloorLevels(ordered, groundSlotIndex(ordered));
+  p.activeFloorId = copy.id;
   p.updatedAt = new Date();
   currentProject.set({ ...p });
 }

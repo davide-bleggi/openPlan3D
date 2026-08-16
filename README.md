@@ -44,6 +44,7 @@ Design floor plans in an intuitive 2D editor, then instantly preview them in a f
 - **Layers** — Organize elements across multiple layers with visibility toggles
 - **Annotations** — Text labels with customizable font size and color
 - **Room presets** — Quickly apply standard room dimensions
+- **Multi-floor** — Floor dropdown to switch levels, plus a floor manager to reorder the stack (drag or arrows), rename, duplicate and remove floors; new floors start empty or as an independent copy of the one below
 - **Undo/Redo** — Full history with grouped operations
 - **Version history** — Auto-saved snapshots you can restore
 
