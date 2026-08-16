@@ -354,9 +354,9 @@
           >
             <span class="flex-1 truncate">{fl.name || floorNameForLevel(fl.level ?? 0)}</span>
             <!-- Names stay with their floor when the stack is reordered, so the
-                 position is what tells you where a floor sits. "F" matches the
-                 floor count on the button (7F = seven floors, F2 = floor 2). -->
-            <span class="text-[10px] text-gray-400">F{fl.level ?? 0}</span>
+                 position is what tells you where a floor sits. Written the same
+                 way as the floor count on the button: 7F floors, floor 2F. -->
+            <span class="text-[10px] text-gray-400">{fl.level ?? 0}F</span>
             {#if fl.id === activeFloorId}<span aria-hidden="true">✓</span>{/if}
           </button>
         {/each}
