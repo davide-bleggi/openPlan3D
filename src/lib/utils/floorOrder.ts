@@ -10,7 +10,6 @@
  */
 
 import type { Floor } from '$lib/models/types';
-import { floorNameForLevel, isAutoFloorName } from './floorStacking';
 
 function levelOf(floor: Floor): number {
   return typeof floor.level === 'number' && Number.isFinite(floor.level) ? floor.level : 0;
@@ -37,19 +36,21 @@ export function groundSlotIndex(ordered: Floor[]): number {
 
 /**
  * Give every floor in a bottom-to-top array a contiguous level, with the floor
- * at `groundIndex` on level 0. Auto-generated names are re-derived from the new
- * level; names the user typed are kept.
+ * at `groundIndex` on level 0.
  *
- * Pure: floors whose level or name change are returned as new objects (their
- * contents are shared, so element references stay valid), and the input array
- * is left untouched.
+ * Only the level changes: a floor's name is its identity and travels with it up
+ * and down the stack. Re-deriving names from the level would make a reorder
+ * invisible — dragging "Floor 2" below "Floor 1" would just swap the two labels
+ * back and the list would look untouched.
+ *
+ * Pure: floors whose level changes are returned as new objects (their contents
+ * are shared, so element references stay valid), and the input array is left
+ * untouched.
  */
 export function assignFloorLevels(ordered: Floor[], groundIndex: number): Floor[] {
   return ordered.map((floor, i) => {
     const level = i - groundIndex;
-    if (levelOf(floor) === level && floor.name) return floor;
-    const name = isAutoFloorName(floor.name) ? floorNameForLevel(level) : floor.name;
-    return { ...floor, level, name };
+    return levelOf(floor) === level ? floor : { ...floor, level };
   });
 }
 

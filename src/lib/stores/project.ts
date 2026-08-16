@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup, EntourageItem } from '$lib/models/types';
-import { floorNameForLevel, isAutoFloorName } from '$lib/utils/floorStacking';
+import { floorNameForLevel } from '$lib/utils/floorStacking';
 import { assignFloorLevels, groundSlotIndex, moveFloorInStack, normalizeFloorOrder, orderFloorsBottomUp, reorderFloorStack } from '$lib/utils/floorOrder';
 import { cloneFloorContents } from '$lib/utils/floorClone';
 
@@ -746,7 +746,7 @@ export function duplicateFloor(id: string, includeFurniture = true) {
   const copy: Floor = {
     ...cloneFloorContents(source, { includeFurniture, newId: uid }),
     id: uid(),
-    name: isAutoFloorName(source.name) ? '' : `${source.name} copy`,
+    name: `${source.name || floorNameForLevel(source.level ?? 0)} copy`,
     level: source.level ?? 0,
   };
   ordered.splice(index + 1, 0, copy);

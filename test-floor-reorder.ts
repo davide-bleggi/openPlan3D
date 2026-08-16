@@ -10,7 +10,7 @@ import {
   groundSlotIndex,
 } from './src/lib/utils/floorOrder.js';
 import { cloneFloorContents } from './src/lib/utils/floorClone.js';
-import { computeFloorElevations, isAutoFloorName } from './src/lib/utils/floorStacking.js';
+import { computeFloorElevations } from './src/lib/utils/floorStacking.js';
 import type { Floor } from './src/lib/models/types.js';
 
 let allPassed = true;
@@ -55,7 +55,7 @@ console.log('=== moving a floor up the stack ===');
   check('array is bottom-to-top after the move', moved.map((f) => f.id).join('') === 'bac', moved.map((f) => f.id).join(''));
   check('levels stay contiguous from 0', levels(moved) === '0, 1, 2', levels(moved));
   check('the moved floor carries its own walls', moved[1].walls[0].id === 'a-w1');
-  check('auto names renumber to match the new order', names(moved) === 'Ground Floor | Floor 1 | Floor 2', names(moved));
+  check('names travel with their floor instead of renumbering', names(moved) === 'Floor 1 | Ground Floor | Floor 2', names(moved));
 
   const stack = computeFloorElevations(moved);
   check('3D elevations follow the new order', stack.map((e) => e.floor.id).join('') === 'bac', stack.map((e) => e.floor.id).join(''));
@@ -88,13 +88,26 @@ console.log('\n=== drag-and-drop reorder ===');
   check('out-of-range indices leave the order alone', reorderFloorStack(floors, 0, 9).map((f) => f.id).join('') === 'abcd');
 }
 
-console.log('\n=== custom names survive reordering ===');
+console.log('\n=== names are identity, levels are position ===');
 {
   const floors = [makeFloor('a', 0, 'Ground Floor'), makeFloor('b', 1, 'Attic Studio'), makeFloor('c', 2, 'Floor 2')];
   const moved = moveFloorInStack(floors, 'b', 1);
-  check('a user-typed name is never rewritten', moved.find((f) => f.id === 'b')!.name === 'Attic Studio');
-  check('auto names around it still renumber', moved.find((f) => f.id === 'c')!.name === 'Floor 1', names(moved));
-  check('auto-name detection ignores custom names', !isAutoFloorName('Attic Studio') && isAutoFloorName('Floor 3') && isAutoFloorName('Basement 2'));
+  check('a name is never rewritten by a move', moved.find((f) => f.id === 'b')!.name === 'Attic Studio');
+  check('the whole list keeps its names, in the new order', names(moved) === 'Ground Floor | Floor 2 | Attic Studio', names(moved));
+  check('levels follow the new positions', levels(moved) === '0, 1, 2', levels(moved));
+  check('the moved floor sits at the level of the one it passed', moved[2].id === 'b' && moved[2].level === 2);
+}
+
+console.log('\n=== a reorder is visible in the list ===');
+{
+  // Regression: re-deriving auto names from the level made a reorder look like
+  // a no-op — the labels swapped back and the list read identically.
+  const floors = [makeFloor('a', 0, 'Ground Floor', 260), makeFloor('b', 1, 'Floor 1', 260), makeFloor('c', 2, 'Floor 2', 260)];
+  const before = names(orderFloorsBottomUp(floors));
+  const moved = reorderFloorStack(floors, 0, 2); // ground floor to the top
+  check('the list order actually changes', names(moved) !== before, `${before} -> ${names(moved)}`);
+  check('the dragged floor is where it was dropped', moved[2].id === 'a' && moved[2].name === 'Ground Floor', names(moved));
+  check('its contents came along', moved[2].walls[0].id === 'a-w1');
 }
 
 console.log('\n=== basements keep the ground floor anchored ===');
@@ -106,7 +119,7 @@ console.log('\n=== basements keep the ground floor anchored ===');
   const moved = moveFloorInStack(floors, 'b', -1); // Floor 1 swaps below the ground floor
   check('the level-0 slot stays put in the stack', moved[1].level === 0, levels(moved));
   check('the basement slot stays below it', moved[0].level === -1, levels(moved));
-  check('renamed to match their new slots', names(moved) === 'Basement | Ground Floor | Floor 1', names(moved));
+  check('names stay put while the slots renumber', names(moved) === 'Basement | Floor 1 | Ground Floor', names(moved));
 
   const stack = computeFloorElevations(moved);
   check('the level-0 floor still sits at Y=0', stack.find((e) => e.floor.level === 0)!.elevation === 0);

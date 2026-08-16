@@ -78,17 +78,6 @@ export function defaultFloorName(floor: Floor, index: number): string {
   return floorNameForLevel(level);
 }
 
-/**
- * True when `name` looks like one this app generated from a level number.
- *
- * Auto-generated names are re-derived when a floor changes position in the
- * stack; names the user typed are left alone.
- */
-export function isAutoFloorName(name: string | undefined): boolean {
-  if (!name) return true;
-  return /^(Ground Floor|Basement|Basement \d+|Floor \d+)$/.test(name.trim());
-}
-
 function levelOf(floor: Floor): number {
   return typeof floor.level === 'number' && Number.isFinite(floor.level) ? floor.level : 0;
 }
