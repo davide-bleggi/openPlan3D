@@ -233,6 +233,6 @@
 <div class="border-t border-gray-100 pt-1">
   <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left rounded-lg" onclick={onAdd}>+ Add floor…</button>
   <p class="px-3 pb-1.5 pt-0.5 text-[10px] text-gray-400 leading-snug">
-    Highest floor first. Drag a row to change the stacking order.
+    {stack.length} floor{stack.length === 1 ? '' : 's'}, highest first. Drag a row to change the stacking order.
   </p>
 </div>

@@ -45,10 +45,12 @@
   });
   viewMode.subscribe((m) => { mode = m; });
 
-  let activeFloorName = $derived.by(() => {
-    const fl = floors.find((f) => f.id === activeFloorId);
-    return fl ? (fl.name || floorNameForLevel(fl.level ?? 0)) : 'Floor';
-  });
+  let activeFloorEntry = $derived(floors.find((f) => f.id === activeFloorId));
+  let activeFloorName = $derived(
+    activeFloorEntry ? (activeFloorEntry.name || floorNameForLevel(activeFloorEntry.level ?? 0)) : 'Floor',
+  );
+  /** Position of the floor being edited — the same `2F` badge the menu rows use. */
+  let activeFloorLevel = $derived(activeFloorEntry?.level ?? 0);
 
   function setMode(m: '2d' | '3d') {
     viewMode.set(m);
@@ -324,7 +326,7 @@
     >
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
       <span class="truncate max-w-[9rem] font-semibold">{activeFloorName}</span>
-      <span class="text-white/50 text-[10px]">{floors.length}F</span>
+      <span class="text-white/50 text-[10px]">{activeFloorLevel}F</span>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform {floorMenuOpen ? 'rotate-180' : ''}"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
     {#if floorMenuOpen}
