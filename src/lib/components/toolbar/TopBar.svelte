@@ -5,13 +5,12 @@
   import { localStore } from '$lib/services/datastore';
   import { get } from 'svelte/store';
   import type { Floor, Project } from '$lib/models/types';
-  import { orderFloorsBottomUp } from '$lib/utils/floorOrder';
   import { floorNameForLevel } from '$lib/utils/floorStacking';
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
   import { exportDXF, exportDWG } from '$lib/utils/cadExport';
   import { importRoomPlan } from '$lib/utils/roomplanImport';
   import SettingsDialog from './SettingsDialog.svelte';
-  import FloorsDialog from './FloorsDialog.svelte';
+  import FloorsMenu from './FloorsMenu.svelte';
   import AddFloorDialog from './AddFloorDialog.svelte';
   import AreaSummaryPanel from '$lib/components/sidebar/AreaSummaryPanel.svelte';
   import { saveState, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
@@ -19,7 +18,6 @@
   import VersionHistoryPanel from './VersionHistoryPanel.svelte';
 
   let settingsOpen = $state(false);
-  let floorsOpen = $state(false);
   let addFloorOpen = $state(false);
   let floorMenuOpen = $state(false);
   let floorMenuRef: HTMLDivElement | undefined = $state();
@@ -47,10 +45,6 @@
   });
   viewMode.subscribe((m) => { mode = m; });
 
-  /** Floors bottom-to-top (the stacking order), and the same list drawn
-   *  highest-first for the dropdown so it reads like the building. */
-  let orderedFloors: Floor[] = $derived(orderFloorsBottomUp(floors));
-  let floorMenuItems: Floor[] = $derived([...orderedFloors].reverse());
   let activeFloorName = $derived.by(() => {
     const fl = floors.find((f) => f.id === activeFloorId);
     return fl ? (fl.name || floorNameForLevel(fl.level ?? 0)) : 'Floor';
@@ -109,16 +103,6 @@
     floorMenuOpen = false;
   }
 
-  function openFloorManager() {
-    floorsOpen = true;
-    moreOpen = false;
-    floorMenuOpen = false;
-  }
-
-  function chooseFloor(id: string) {
-    setActiveFloor(id);
-    floorMenuOpen = false;
-  }
 
   async function save() {
     await manualSave();
@@ -239,7 +223,6 @@
       if (exportOpen) exportOpen = false;
       if (e.key === 'Escape' && moreOpen) moreOpen = false;
       if (e.key === 'Escape' && floorMenuOpen) floorMenuOpen = false;
-      if (e.key === 'Escape' && floorsOpen) floorsOpen = false;
       if (e.key === 'Escape' && addFloorOpen) addFloorOpen = false;
       if (e.key === 'Escape' && versionHistoryOpen) versionHistoryOpen = false;
       if (e.key === 'Escape' && areaOpen) areaOpen = false;
@@ -345,24 +328,8 @@
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform {floorMenuOpen ? 'rotate-180' : ''}"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
     {#if floorMenuOpen}
-      <div class="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-56 z-50 max-h-[60vh] overflow-y-auto" role="menu">
-        {#each floorMenuItems as fl}
-          <button
-            class="w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-100 {fl.id === activeFloorId ? 'text-blue-600 font-semibold' : 'text-gray-700'}"
-            onclick={() => chooseFloor(fl.id)}
-            role="menuitem"
-          >
-            <span class="flex-1 truncate">{fl.name || floorNameForLevel(fl.level ?? 0)}</span>
-            <!-- Names stay with their floor when the stack is reordered, so the
-                 position is what tells you where a floor sits. Written the same
-                 way as the floor count on the button: 7F floors, floor 2F. -->
-            <span class="text-[10px] text-gray-400">{fl.level ?? 0}F</span>
-            {#if fl.id === activeFloorId}<span aria-hidden="true">✓</span>{/if}
-          </button>
-        {/each}
-        <div class="h-px bg-gray-100 my-1"></div>
-        <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={onAddFloor} role="menuitem">+ Add floor…</button>
-        <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={openFloorManager} role="menuitem">Manage floors…</button>
+      <div class="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 p-1 w-80 z-50">
+        <FloorsMenu onAdd={onAddFloor} onSelect={() => floorMenuOpen = false} />
       </div>
     {/if}
   </div>
@@ -486,16 +453,10 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
     </button>
     {#if moreOpen}
-      <div class="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-56 z-50 max-h-[70vh] overflow-y-auto">
+      <div class="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-64 z-50 max-h-[70vh] overflow-y-auto">
         {#if floors.length > 1 || mode === '2d'}
           <div class="px-3 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">Floors</div>
-          {#each floorMenuItems as fl}
-            <button class="w-full px-3 py-2 text-sm hover:bg-gray-100 text-left flex items-center gap-2 {fl.id === activeFloorId ? 'text-blue-600 font-semibold' : 'text-gray-700'}" onclick={() => { setActiveFloor(fl.id); moreOpen = false; }}>
-              {fl.name}{fl.id === activeFloorId ? ' ✓' : ''}
-            </button>
-          {/each}
-          <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={() => { onAddFloor(); }}>+ Add Floor</button>
-          <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={openFloorManager}>Manage Floors…</button>
+          <FloorsMenu onAdd={onAddFloor} onSelect={() => moreOpen = false} />
           <div class="h-px bg-gray-100 my-1"></div>
         {/if}
         {#if mode === '2d'}
@@ -591,7 +552,6 @@
 </div>
 
 <SettingsDialog bind:open={settingsOpen} />
-<FloorsDialog bind:open={floorsOpen} />
 <AddFloorDialog bind:open={addFloorOpen} />
 <VersionHistoryPanel bind:open={versionHistoryOpen} />
 

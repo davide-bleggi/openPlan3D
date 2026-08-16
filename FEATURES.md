@@ -68,7 +68,7 @@
 - [ ] Room properties (name, floor texture)
 
 ### Multi-Floor
-- [x] Floor selector dropdown (active floor name + count)
+- [x] Floor selector dropdown, doubling as the floor manager
 - [x] Add/remove floors
 - [x] Floor counter ("3F")
 - [x] Reorder floors by drag-and-drop
