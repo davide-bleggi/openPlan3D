@@ -1,20 +1,26 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
-  import { currentProject, viewMode, undo, redo, addFloor, removeFloor, setActiveFloor, updateProjectName, loadProject, createDefaultProject, panMode, importFloorIntoCurrentProject, activeFloor, selectedElementId, elevationWallId, elevationPickMode } from '$lib/stores/project';
+  import { currentProject, viewMode, undo, redo, setActiveFloor, updateProjectName, loadProject, createDefaultProject, panMode, importFloorIntoCurrentProject, activeFloor, selectedElementId, elevationWallId, elevationPickMode } from '$lib/stores/project';
   import { localStore } from '$lib/services/datastore';
   import { get } from 'svelte/store';
   import type { Floor, Project } from '$lib/models/types';
+  import { floorNameForLevel } from '$lib/utils/floorStacking';
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
   import { exportDXF, exportDWG } from '$lib/utils/cadExport';
   import { importRoomPlan } from '$lib/utils/roomplanImport';
   import SettingsDialog from './SettingsDialog.svelte';
+  import FloorsMenu from './FloorsMenu.svelte';
+  import AddFloorDialog from './AddFloorDialog.svelte';
   import AreaSummaryPanel from '$lib/components/sidebar/AreaSummaryPanel.svelte';
   import { saveState, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
   import { initVersionHistory, snapshotOnAction } from '$lib/stores/versionHistory';
   import VersionHistoryPanel from './VersionHistoryPanel.svelte';
 
   let settingsOpen = $state(false);
+  let addFloorOpen = $state(false);
+  let floorMenuOpen = $state(false);
+  let floorMenuRef: HTMLDivElement | undefined = $state();
   let areaOpen = $state(false);
   let versionHistoryOpen = $state(false);
 
@@ -38,6 +44,13 @@
     }
   });
   viewMode.subscribe((m) => { mode = m; });
+
+  let activeFloorEntry = $derived(floors.find((f) => f.id === activeFloorId));
+  let activeFloorName = $derived(
+    activeFloorEntry ? (activeFloorEntry.name || floorNameForLevel(activeFloorEntry.level ?? 0)) : 'Floor',
+  );
+  /** Position of the floor being edited — the same `2F` badge the menu rows use. */
+  let activeFloorLevel = $derived(activeFloorEntry?.level ?? 0);
 
   function setMode(m: '2d' | '3d') {
     viewMode.set(m);
@@ -85,14 +98,13 @@
     if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
   }
 
+  /** Creating a floor is its own dialog, separate from the manager. */
   function onAddFloor() {
-    addFloor(`Floor ${floors.length}`);
+    addFloorOpen = true;
+    moreOpen = false;
+    floorMenuOpen = false;
   }
 
-  function onRemoveFloor(id: string) {
-    if (floors.length <= 1) return;
-    removeFloor(id);
-  }
 
   async function save() {
     await manualSave();
@@ -205,10 +217,15 @@
       if (moreOpen && moreRef && !moreRef.contains(e.target as Node)) {
         moreOpen = false;
       }
+      if (floorMenuOpen && floorMenuRef && !floorMenuRef.contains(e.target as Node)) {
+        floorMenuOpen = false;
+      }
     }
     function handleKeydown(e: KeyboardEvent) {
       if (exportOpen) exportOpen = false;
       if (e.key === 'Escape' && moreOpen) moreOpen = false;
+      if (e.key === 'Escape' && floorMenuOpen) floorMenuOpen = false;
+      if (e.key === 'Escape' && addFloorOpen) addFloorOpen = false;
       if (e.key === 'Escape' && versionHistoryOpen) versionHistoryOpen = false;
       if (e.key === 'Escape' && areaOpen) areaOpen = false;
     }
@@ -298,23 +315,25 @@
 
   <div class="h-5 w-px bg-white/20 max-md:hidden"></div>
 
-  <!-- Floor selector as buttons (in overflow menu on mobile) -->
-  <div class="flex items-center gap-1 max-md:hidden">
-    {#each floors as fl}
-      <button
-        class="px-2 py-0.5 text-xs rounded transition-colors {fl.id === activeFloorId ? 'bg-white text-slate-800 font-semibold' : 'text-white/80 hover:bg-white/10'}"
-        onclick={() => setActiveFloor(fl.id)}
-        ondblclick={() => onRemoveFloor(fl.id)}
-        title={fl.id === activeFloorId ? 'Active floor (dbl-click to remove)' : 'Click to switch, dbl-click to remove'}
-      >{fl.name}</button>
-    {/each}
+  <!-- Floor selector: dropdown listing the stack highest floor first -->
+  <div class="relative max-md:hidden" bind:this={floorMenuRef}>
     <button
-      onclick={onAddFloor}
-      class="text-white/80 hover:text-white text-xs hover:bg-white/10 px-1.5 py-0.5 rounded transition-colors"
-      title="Add Floor"
-      aria-label="Add Floor"
-    >+</button>
-    <span class="text-white/40 text-[10px] ml-1">{floors.length}F</span>
+      onclick={() => floorMenuOpen = !floorMenuOpen}
+      class="flex items-center gap-1.5 px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-xs transition-colors"
+      title="Switch floor"
+      aria-haspopup="menu"
+      aria-expanded={floorMenuOpen}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
+      <span class="truncate max-w-[9rem] font-semibold">{activeFloorName}</span>
+      <span class="text-white/50 text-[10px]">{activeFloorLevel}F</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform {floorMenuOpen ? 'rotate-180' : ''}"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    {#if floorMenuOpen}
+      <div class="absolute left-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 p-1 w-80 z-50">
+        <FloorsMenu onAdd={onAddFloor} onSelect={() => floorMenuOpen = false} />
+      </div>
+    {/if}
   </div>
 
   <div class="flex-1"></div>
@@ -436,15 +455,10 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
     </button>
     {#if moreOpen}
-      <div class="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-56 z-50 max-h-[70vh] overflow-y-auto">
+      <div class="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-64 z-50 max-h-[70vh] overflow-y-auto">
         {#if floors.length > 1 || mode === '2d'}
           <div class="px-3 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">Floors</div>
-          {#each floors as fl}
-            <button class="w-full px-3 py-2 text-sm hover:bg-gray-100 text-left flex items-center gap-2 {fl.id === activeFloorId ? 'text-blue-600 font-semibold' : 'text-gray-700'}" onclick={() => { setActiveFloor(fl.id); moreOpen = false; }}>
-              {fl.name}{fl.id === activeFloorId ? ' ✓' : ''}
-            </button>
-          {/each}
-          <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={() => { onAddFloor(); }}>+ Add Floor</button>
+          <FloorsMenu onAdd={onAddFloor} onSelect={() => moreOpen = false} />
           <div class="h-px bg-gray-100 my-1"></div>
         {/if}
         {#if mode === '2d'}
@@ -540,6 +554,7 @@
 </div>
 
 <SettingsDialog bind:open={settingsOpen} />
+<AddFloorDialog bind:open={addFloorOpen} />
 <VersionHistoryPanel bind:open={versionHistoryOpen} />
 
 {#if areaOpen}

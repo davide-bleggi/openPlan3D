@@ -68,9 +68,12 @@
 - [ ] Room properties (name, floor texture)
 
 ### Multi-Floor
-- [ ] Floor selector ("First floor")
-- [ ] Add/remove floors
-- [ ] Floor counter ("1 of 5")
+- [x] Floor selector dropdown, doubling as the floor manager
+- [x] Add/remove floors
+- [x] Floor counter ("3F")
+- [x] Reorder floors by drag-and-drop
+- [x] New floor starts empty or as a copy of any existing floor
+- [x] Duplicate and rename floors
 
 ### Project Management
 - [x] Save to localStorage

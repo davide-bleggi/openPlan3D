@@ -36,18 +36,22 @@ export function floorStructuralHeight(floor: Pick<Floor, 'walls'>): number {
 /**
  * Order the floors bottom-to-top and give each one a distinct Y offset.
  *
- * Offsets are cumulative rather than `index * constant`: floors keep their own
- * heights, and floors that share a `level` (possible in older projects) still
- * get separate elevations because the sort is stable.
+ * Offsets are cumulative rather than `index * constant`: a floor's slab sits on
+ * top of everything below it, so floors keep their own heights, and floors that
+ * share a `level` (possible in older projects) still get separate elevations
+ * because the sort is stable.
  */
 export function computeFloorElevations(floors: Floor[]): FloorElevation[] {
   const ordered = [...floors].sort((a, b) => levelOf(a) - levelOf(b));
 
+  // The cursor is the top of the floors placed so far, so each slab lands on
+  // the heights *below* it — advancing before assigning would offset every
+  // floor by its own height and let taller floors poke through the one above.
   let cursor = 0;
   const stack: FloorElevation[] = ordered.map((floor, index) => {
     const height = floorStructuralHeight(floor);
-    cursor += height;
     const entry: FloorElevation = { floor, index, height, elevation: cursor };
+    cursor += height;
     return entry;
   });
 
@@ -61,12 +65,17 @@ export function computeFloorElevations(floors: Floor[]): FloorElevation[] {
   return stack;
 }
 
-/** Display name for a floor that was never explicitly named. */
-export function defaultFloorName(floor: Floor, index: number): string {
-  const level = typeof floor.level === 'number' ? floor.level : index;
+/** Conventional name for a floor sitting at `level` (0 = ground, negatives below). */
+export function floorNameForLevel(level: number): string {
   if (level === 0) return 'Ground Floor';
   if (level < 0) return level === -1 ? 'Basement' : `Basement ${-level}`;
   return `Floor ${level}`;
+}
+
+/** Display name for a floor that was never explicitly named. */
+export function defaultFloorName(floor: Floor, index: number): string {
+  const level = typeof floor.level === 'number' ? floor.level : index;
+  return floorNameForLevel(level);
 }
 
 function levelOf(floor: Floor): number {
