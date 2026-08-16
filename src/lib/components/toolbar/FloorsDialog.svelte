@@ -232,7 +232,7 @@
                 title="Click to open, double-click to rename"
               >
                 {labelOf(fl)}
-                <span class="text-[10px] text-gray-400 ml-1">L{fl.level ?? 0}</span>
+                <span class="text-[10px] text-gray-400 ml-1">F{fl.level ?? 0}</span>
               </button>
             {/if}
 
