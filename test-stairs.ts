@@ -11,20 +11,22 @@ import {
   flightRunLength,
   flightStartCoord,
   flightTreadDepth,
-  railingPostPositions,
   spiralRadius,
   stairFootprint,
   stairRailingHeight,
   SPIRAL_POST_RATIO,
-  STAIR_RAILING_HEIGHT,
-  STAIR_RAILING_POST_SPACING,
-  STAIR_RAILING_POST_THICKNESS,
   STAIR_TOTAL_RISE,
   type StairFlight,
   type StairLayout,
   type StairRailingRun,
   type StairRect
 } from './src/lib/utils/stairGeometry.js';
+import {
+  railingPostPositions,
+  RAILING_HEIGHT,
+  RAILING_POST_SPACING,
+  RAILING_POST_THICKNESS
+} from './src/lib/utils/railings.js';
 import type { Stair, StairType } from './src/lib/models/types.js';
 
 const EPS = 1e-6;
@@ -279,7 +281,7 @@ function surfaces(layout: StairLayout): Array<{ rect: StairRect; from: number; t
 
 /** Does a railing point rest on some walkable surface, at that surface's height? */
 function onSurface(p: { x: number; y: number; base: number }, layout: StairLayout): boolean {
-  const tol = STAIR_RAILING_POST_THICKNESS / 2 + 1e-6;
+  const tol = RAILING_POST_THICKNESS / 2 + 1e-6;
   return surfaces(layout).some(({ rect, from, to }) => {
     if (distToRect(p, rect) > tol) return false;
     const lo = Math.min(from, to) - 1e-6;
@@ -321,7 +323,7 @@ for (const type of types) {
 
         // Posts: one at each end, one at every corner, and none further apart
         // than the target spacing.
-        const posts = railingPostPositions(run);
+        const posts = railingPostPositions(run.points);
         const first = posts[0];
         const last = posts[posts.length - 1];
         check(`${label} ${run.side}: posts start and end the railing`,
@@ -329,7 +331,7 @@ for (const type of types) {
             Math.hypot(last.x - pts[pts.length - 1].x, last.y - pts[pts.length - 1].y) < 1e-6);
         check(`${label} ${run.side}: posts respect the spacing`,
           posts.every((p, i) => i === 0 ||
-            Math.hypot(p.x - posts[i - 1].x, p.y - posts[i - 1].y) <= STAIR_RAILING_POST_SPACING + 1e-6));
+            Math.hypot(p.x - posts[i - 1].x, p.y - posts[i - 1].y) <= RAILING_POST_SPACING + 1e-6));
         check(`${label} ${run.side}: a post at every corner`,
           pts.every((v) => posts.some((p) => Math.hypot(p.x - v.x, p.y - v.y) < 1e-6)));
         check(`${label} ${run.side}: posts rest on the stair`,
@@ -421,10 +423,10 @@ for (const type of [...types, 'spiral' as StairType]) {
 }
 {
   check('railing height defaults to the standard height',
-    stairRailingHeight(makeStair({})) === STAIR_RAILING_HEIGHT);
+    stairRailingHeight(makeStair({})) === RAILING_HEIGHT);
   check('railing height is configurable', stairRailingHeight(makeStair({ railingHeight: 110 })) === 110);
   check('silly railing heights fall back to something usable',
-    stairRailingHeight(makeStair({ railingHeight: 0 })) === STAIR_RAILING_HEIGHT &&
+    stairRailingHeight(makeStair({ railingHeight: 0 })) === RAILING_HEIGHT &&
       stairRailingHeight(makeStair({ railingHeight: 2 })) >= 30);
 }
 

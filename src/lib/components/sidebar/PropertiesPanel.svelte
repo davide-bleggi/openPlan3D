@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden, setWallRailing } from '$lib/stores/project';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
-  import { stairFootprint, stairRailingSides, STAIR_RAILING_HEIGHT, STAIR_RAILING_MIN_HEIGHT } from '$lib/utils/stairGeometry';
+  import { stairFootprint, stairRailingSides } from '$lib/utils/stairGeometry';
+  import { RAILING_HEIGHT, RAILING_MIN_HEIGHT } from '$lib/utils/railings';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import { base } from '$app/paths';
   import { onMount } from 'svelte';
@@ -416,16 +417,33 @@
         <button
           class="px-2 py-0.5 text-xs rounded {selectedWall.hidden ? 'bg-gray-100 text-gray-500 border border-gray-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'}"
           onclick={() => { if (selectedWall) setWallHidden(selectedWall.id, !selectedWall.hidden); }}
-          title="Hidden walls are not rendered in 3D and appear dashed in the plan. They still bound rooms and keep their dimensions — use this for terrace and balcony railings."
+          title="Hidden walls are not built in 3D and appear dashed in the plan. They still bound rooms and keep their dimensions — use this for a terrace or balcony perimeter, then give it a railing."
         >
           {selectedWall.hidden ? '🚫 Hidden' : '👁 Shown'}
         </button>
       </div>
       {#if selectedWall.hidden}
         <p class="text-[11px] text-gray-400 leading-snug -mt-1">
-          Not rendered in 3D or in exports; still bounds rooms and keeps its dimensions.
-          Doors and windows on this wall are hidden too.
+          The wall itself is not built: it still bounds rooms and keeps its dimensions, and its
+          doors and windows are hidden. A railing, if you add one, is built along its line.
         </p>
+        <!-- The wall stays unbuilt, but it can carry a railing where it stands -->
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gray-500">Railing</span>
+          <button
+            class="px-2 py-0.5 text-xs rounded {selectedWall.railing ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200'}"
+            onclick={() => { if (selectedWall) setWallRailing(selectedWall.id, !selectedWall.railing); }}
+            title="Build a railing along this wall's line — for terrace and balcony perimeters. The wall itself stays unbuilt."
+          >
+            {selectedWall.railing ? '🚧 Railed' : '— None'}
+          </button>
+        </div>
+        {#if selectedWall.railing}
+          <label class="block">
+            <span class="text-xs text-gray-500">Railing height ({unitLabel()})</span>
+            <input type="number" value={displayValue(selectedWall.railingHeight ?? RAILING_HEIGHT)} min={displayValue(RAILING_MIN_HEIGHT)} oninput={(e) => updateWall(selectedWall!.id, { railingHeight: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+          </label>
+        {/if}
       {/if}
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-500">Curved</span>
@@ -978,7 +996,7 @@
       {#if stairRailingSides(selectedStair) !== 'none'}
         <label class="block">
           <span class="text-xs text-gray-500">Railing height ({unitLabel()})</span>
-          <input type="number" value={displayValue(selectedStair.railingHeight ?? STAIR_RAILING_HEIGHT)} min={displayValue(STAIR_RAILING_MIN_HEIGHT)} oninput={(e) => updateStair(selectedStair!.id, { railingHeight: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+          <input type="number" value={displayValue(selectedStair.railingHeight ?? RAILING_HEIGHT)} min={displayValue(RAILING_MIN_HEIGHT)} oninput={(e) => updateStair(selectedStair!.id, { railingHeight: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
         </label>
       {/if}
       {/if}

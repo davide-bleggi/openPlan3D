@@ -2,6 +2,7 @@ import type { Project, Floor } from '$lib/models/types';
 import { getCatalogItem } from '$lib/utils/furnitureCatalog';
 import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
 import { drawDoorOnWall, drawWindowOnWall, drawEntourageItems } from '$lib/utils/canvasRenderer';
+import { wallHasRailing, wallRailingPath, RAILING_RAIL_THICKNESS } from '$lib/utils/railings';
 import type { CanvasState } from '$lib/utils/canvasInteraction';
 import { projectSettings, formatArea } from '$lib/stores/settings';
 import { get } from 'svelte/store';
@@ -84,6 +85,20 @@ function strokeExportWall(
   ctx.lineTo(wall.end.x - minX + pad, wall.end.y - minY + pad);
   ctx.stroke();
   ctx.setLineDash([]);
+  // A railed perimeter is built, so it prints as a solid line over the ghost
+  // rather than as an unbuilt one.
+  if (wallHasRailing(wall)) {
+    ctx.strokeStyle = '#4b5563';
+    ctx.lineWidth = RAILING_RAIL_THICKNESS;
+    ctx.beginPath();
+    for (const [i, p] of wallRailingPath(wall).entries()) {
+      const x = p.x - minX + pad;
+      const y = p.y - minY + pad;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
 }
 
 /**
@@ -272,10 +287,15 @@ export function exportAsSVG(project: Project) {
     const y1 = w.start.y - minY + pad;
     const x2 = w.end.x - minX + pad;
     const y2 = w.end.y - minY + pad;
-    // Hidden walls (terrace/balcony perimeters) print as a thin dashed line
+    // Hidden walls (terrace/balcony perimeters) print as a thin dashed line,
+    // unless they carry a railing, which is built and so prints solid.
     paths += w.hidden
       ? `  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#9ca3af" stroke-width="2" stroke-dasharray="10 8" stroke-linecap="round"/>\n`
       : `  <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#333" stroke-width="${w.thickness}" stroke-linecap="round"/>\n`;
+    if (wallHasRailing(w)) {
+      const pts = wallRailingPath(w).map((p) => `${p.x - minX + pad},${p.y - minY + pad}`).join(' ');
+      paths += `  <polyline points="${pts}" fill="none" stroke="#4b5563" stroke-width="${RAILING_RAIL_THICKNESS}" stroke-linecap="round" stroke-linejoin="round"/>\n`;
+    }
     // dimension label
     const len = Math.round(Math.hypot(x2 - x1, y2 - y1));
     const mx = (x1 + x2) / 2;

@@ -20,12 +20,17 @@ import {
   flightCrossCenter,
   flightRunLength,
   flightStartCoord,
-  flightTreadDepth,
-  railingPostPositions,
-  STAIR_RAILING_POST_SPACING,
-  STAIR_RAILING_POST_THICKNESS,
-  STAIR_RAILING_RAIL_THICKNESS
+  flightTreadDepth
 } from '$lib/utils/stairGeometry';
+import {
+  railingPostPositions,
+  wallHasRailing,
+  wallRailingPath,
+  RAILING_POST_SPACING,
+  RAILING_POST_THICKNESS,
+  RAILING_RAIL_THICKNESS,
+  type RailingPoint
+} from '$lib/utils/railings';
 
 // ── Wall geometry helpers ────────────────────────────────────────────
 
@@ -180,6 +185,16 @@ function paintWallBody(ctx: CanvasRenderingContext2D, w: Wall, selected: boolean
   ctx.stroke();
 }
 
+/**
+ * Draw the railing a hidden wall carries in place of the wall itself, so a
+ * terrace or balcony perimeter reads as railed in the plan and not merely as
+ * an unbuilt line. Walls without one draw nothing.
+ */
+function drawWallRailing(cs: CanvasState, w: Wall, selected: boolean): void {
+  if (!wallHasRailing(w)) return;
+  drawRailingPaths(cs, [wallRailingPath(w)], (p) => wts(cs, p.x, p.y), selected);
+}
+
 export function drawWall(
   cs: CanvasState,
   w: Wall,
@@ -219,6 +234,7 @@ export function drawWall(
     for (let i = innerPts.length - 1; i >= 0; i--) ctx.lineTo(innerPts[i].x, innerPts[i].y);
     ctx.closePath();
     paintWallBody(ctx, w, selected);
+    drawWallRailing(cs, w, selected);
 
     const wlen = wallLength(w);
     if (wlen >= 10 && showDimensions && dimSettings.showExternalDimensions) {
@@ -286,6 +302,7 @@ export function drawWall(
   ctx.lineTo(s.x - nx, s.y - ny);
   ctx.closePath();
   paintWallBody(ctx, w, selected);
+  drawWallRailing(cs, w, selected);
 
   // Wall texture pattern overlay (hidden walls show no material)
   if (w.texture && !w.hidden) {
@@ -1015,6 +1032,54 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
   ctx.restore();
 }
 
+// ── Railing drawing ──────────────────────────────────────────────────
+
+/**
+ * Draw railings in plan: the handrail line plus a tick per post, which reads
+ * as a balustrade rather than as a heavier outline. `project` maps a railing
+ * point to the current canvas space, so this works both for a stair (drawn in
+ * its own rotated local frame) and for a wall (drawn in world coordinates).
+ */
+function drawRailingPaths(
+  cs: CanvasState,
+  paths: RailingPoint[][],
+  project: (p: RailingPoint) => { x: number; y: number },
+  selected: boolean
+): void {
+  const { ctx, zoom } = cs;
+  if (!paths.length) return;
+  ctx.save();
+  // Deep blue when selected: darker than the selection outline it sits on, so
+  // the railing stays readable while the element is being edited.
+  ctx.strokeStyle = selected ? '#1e3a8a' : '#4b5563';
+  ctx.lineWidth = Math.max(1.2, RAILING_RAIL_THICKNESS * zoom);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  for (const path of paths) {
+    if (path.length < 2) continue;
+    ctx.beginPath();
+    path.forEach((p, i) => {
+      const s = project(p);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    ctx.stroke();
+  }
+  // Posts are skipped once they are packed too close together to tell apart.
+  if (RAILING_POST_SPACING * zoom >= 4) {
+    const postSize = Math.max(1.5, RAILING_POST_THICKNESS * zoom);
+    ctx.fillStyle = selected ? '#172554' : '#374151';
+    for (const path of paths) {
+      if (path.length < 2) continue;
+      for (const post of railingPostPositions(path)) {
+        const s = project(post);
+        ctx.fillRect(s.x - postSize / 2, s.y - postSize / 2, postSize, postSize);
+      }
+    }
+  }
+  ctx.restore();
+}
+
 // ── Stair drawing ────────────────────────────────────────────────────
 
 export function drawStair(cs: CanvasState, stair: Stair, selected: boolean): void {
@@ -1149,39 +1214,14 @@ export function drawStair(cs: CanvasState, stair: Stair, selected: boolean): voi
     drawStairLabelLocal();
   }
 
-  // Railings, drawn last so their line stays legible over the treads. In plan
-  // they read as the handrail line plus a tick per post, the same runs the 3D
-  // view builds its balustrade from.
-  const railings = buildStairRailings(stair, layout);
-  if (railings.length) {
-    // Deep blue when selected: darker than the selection outline it sits on,
-    // so the railing stays readable while the stair is being edited.
-    ctx.strokeStyle = selected ? '#1e3a8a' : '#4b5563';
-    ctx.lineWidth = Math.max(1.2, STAIR_RAILING_RAIL_THICKNESS * zoom);
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    for (const run of railings) {
-      ctx.beginPath();
-      run.points.forEach((p, i) => {
-        if (i === 0) ctx.moveTo(p.x * zoom, p.y * zoom);
-        else ctx.lineTo(p.x * zoom, p.y * zoom);
-      });
-      ctx.stroke();
-    }
-    // A tick per post — the dotted read that tells a balustrade apart from a
-    // plain edge. Skipped when zoomed out far enough that they would merge.
-    const postSize = Math.max(1.5, STAIR_RAILING_POST_THICKNESS * zoom);
-    if (STAIR_RAILING_POST_SPACING * zoom >= 4) {
-      ctx.fillStyle = selected ? '#172554' : '#374151';
-      for (const run of railings) {
-        for (const post of railingPostPositions(run)) {
-          ctx.fillRect(post.x * zoom - postSize / 2, post.y * zoom - postSize / 2, postSize, postSize);
-        }
-      }
-    }
-    ctx.lineJoin = 'miter';
-    ctx.lineCap = 'butt';
-  }
+  // Railings, drawn last so their line stays legible over the treads. The ctx
+  // is already in the stair's own frame, so its local points only need scaling.
+  drawRailingPaths(
+    cs,
+    buildStairRailings(stair, layout).map((run) => run.points),
+    (p) => ({ x: p.x * zoom, y: p.y * zoom }),
+    selected
+  );
 
   if (selected) {
     ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);

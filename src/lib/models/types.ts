@@ -16,6 +16,15 @@ export interface Wall {
    * terrace and balcony perimeters that only have railings.
    */
   hidden?: boolean;
+  /**
+   * Railing along this wall's line: the wall itself stays unbuilt, but a
+   * balustrade runs where it stands. Only meaningful on a hidden wall — a wall
+   * that is actually built already stops you walking off. Off by default, so a
+   * terrace perimeter is bare until you ask for the railing.
+   */
+  railing?: boolean;
+  /** Handrail height above the floor (cm). Omitted means 90. */
+  railingHeight?: number;
   texture?: string;
   /** Interior-specific overrides (if different from exterior) */
   interiorColor?: string;

@@ -29,6 +29,7 @@
  * ground plane.
  */
 import type { Stair, StairRailingSides } from '$lib/models/types';
+import { railingHeight, RAILING_POST_THICKNESS, type RailingPoint } from '$lib/utils/railings';
 
 /** Height climbed by one flight of stairs (cm) — one storey. */
 export const STAIR_TOTAL_RISE = 260;
@@ -304,32 +305,14 @@ export function flightCrossWidth(flight: StairFlight): number {
 // ── Railings ─────────────────────────────────────────────────────────
 //
 // A railing follows the *open* edges of the walking surface, so it is derived
-// from the layout above rather than described separately: each run is a
-// polyline of plan points, every point carrying the height of the surface
-// underneath it. Renderers put the handrail `railingHeight` above that line
-// and drop posts down to it, which keeps 2D and 3D on the same railings.
-
-/** Default handrail height above the walking surface (cm). */
-export const STAIR_RAILING_HEIGHT = 90;
-/** Shortest handrail worth drawing — guards against silly input (cm). */
-export const STAIR_RAILING_MIN_HEIGHT = 30;
-/** Target gap between railing posts (cm); each segment rounds to fit. */
-export const STAIR_RAILING_POST_SPACING = 25;
-/** Side of the square handrail (cm). */
-export const STAIR_RAILING_RAIL_THICKNESS = 4;
-/** Side of a square post (cm). */
-export const STAIR_RAILING_POST_THICKNESS = 3;
+// from the layout above rather than described separately: each run is one of
+// the polyline paths described in `railings.ts`, every point carrying the
+// height of the surface underneath it. Renderers put the handrail above that
+// line and drop posts down to it — the same treatment a terrace railing gets,
+// so the two look alike and 2D and 3D stay on the same railings.
 
 /** One hand of a stair, as you walk up it. */
 export type StairRailingSide = 'left' | 'right';
-
-/** A point on a railing: where it sits in plan, and the surface height there. */
-export interface StairRailingPoint {
-  x: number;
-  y: number;
-  /** Height of the walking surface under this point (cm above the floor). */
-  base: number;
-}
 
 export interface StairRailingRun {
   side: StairRailingSide;
@@ -337,7 +320,7 @@ export interface StairRailingRun {
    * Path of the handrail from the foot of the stair to the top, running
    * continuously through the landings.
    */
-  points: StairRailingPoint[];
+  points: RailingPoint[];
 }
 
 /** Which sides of a stair are railed — unset means both. */
@@ -347,8 +330,7 @@ export function stairRailingSides(stair: Stair): StairRailingSides {
 
 /** Handrail height above the walking surface for a stair (cm). */
 export function stairRailingHeight(stair: Stair): number {
-  const h = stair.railingHeight;
-  return h && h > 0 ? Math.max(STAIR_RAILING_MIN_HEIGHT, h) : STAIR_RAILING_HEIGHT;
+  return railingHeight(stair.railingHeight);
 }
 
 /** Height of the walking surface a fraction `t` (0 = foot, 1 = head) up a flight. */
@@ -375,7 +357,7 @@ function flightSidePoint(
   side: StairRailingSide,
   t: number,
   riserHeight: number
-): StairRailingPoint {
+): RailingPoint {
   const cross = flightSideCoord(flight, side);
   const along = flightStartCoord(flight) + flight.dir * t * flightRunLength(flight);
   const base = flightBaseAt(flight, riserHeight, t);
@@ -397,7 +379,7 @@ function landingRailingPoints(
   above: StairFlight,
   side: StairRailingSide,
   riserHeight: number
-): StairRailingPoint[] {
+): RailingPoint[] {
   const base = landing.atRiser * riserHeight;
   const crossBelow = flightSideCoord(below, side);
   const crossAbove = flightSideCoord(above, side);
@@ -429,8 +411,8 @@ function landingRailingPoints(
 }
 
 /** Drop points that repeat the previous one, which turns at a shared corner produce. */
-function dedupeRailingPoints(points: StairRailingPoint[]): StairRailingPoint[] {
-  const out: StairRailingPoint[] = [];
+function dedupeRailingPoints(points: RailingPoint[]): RailingPoint[] {
+  const out: RailingPoint[] = [];
   for (const p of points) {
     const prev = out[out.length - 1];
     if (prev && Math.abs(prev.x - p.x) < 1e-6 && Math.abs(prev.y - p.y) < 1e-6) continue;
@@ -452,13 +434,13 @@ export function buildStairRailings(
   if (sides === 'none') return [];
   // Keep posts inside the footprint, so the railing never spills outside the
   // box the user can click and select.
-  const inset = STAIR_RAILING_POST_THICKNESS / 2;
+  const inset = RAILING_POST_THICKNESS / 2;
 
   if (layout.type === 'spiral') {
     // Only the outer edge of a spiral is open — the inner one is the centre
     // post it winds around — so it has a single railing, on the walker's left.
     const r = Math.max(layout.postRadius, layout.radius - inset);
-    const points: StairRailingPoint[] = [];
+    const points: RailingPoint[] = [];
     for (let i = 0; i <= layout.riserCount; i++) {
       const a = layout.startAngle + (i / layout.riserCount) * layout.totalAngle;
       points.push({ x: r * Math.cos(a), y: r * Math.sin(a), base: i * layout.riserHeight });
@@ -468,7 +450,7 @@ export function buildStairRailings(
 
   const hx = layout.footprint.width / 2 - inset;
   const hy = layout.footprint.depth / 2 - inset;
-  const clamp = (p: StairRailingPoint): StairRailingPoint => ({
+  const clamp = (p: RailingPoint): RailingPoint => ({
     x: Math.max(-hx, Math.min(hx, p.x)),
     y: Math.max(-hy, Math.min(hy, p.y)),
     base: p.base
@@ -477,7 +459,7 @@ export function buildStairRailings(
   const runs: StairRailingRun[] = [];
   for (const side of ['left', 'right'] as const) {
     if (sides !== 'both' && sides !== side) continue;
-    const points: StairRailingPoint[] = [];
+    const points: RailingPoint[] = [];
     layout.flights.forEach((flight, i) => {
       const landing = layout.landings[i - 1];
       const previous = layout.flights[i - 1];
@@ -493,31 +475,4 @@ export function buildStairRailings(
     if (path.length >= 2) runs.push({ side, points: path });
   }
   return runs;
-}
-
-/**
- * Positions of the posts along a railing run — one at every end and corner,
- * with the rest spread evenly so no gap exceeds `spacing`.
- */
-export function railingPostPositions(
-  run: StairRailingRun,
-  spacing: number = STAIR_RAILING_POST_SPACING
-): StairRailingPoint[] {
-  const step = Math.max(5, spacing);
-  const posts: StairRailingPoint[] = [];
-  for (let i = 0; i < run.points.length - 1; i++) {
-    const a = run.points[i];
-    const b = run.points[i + 1];
-    const count = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step));
-    for (let j = 0; j < count; j++) {
-      const t = j / count;
-      posts.push({
-        x: a.x + (b.x - a.x) * t,
-        y: a.y + (b.y - a.y) * t,
-        base: a.base + (b.base - a.base) * t
-      });
-    }
-  }
-  posts.push(run.points[run.points.length - 1]);
-  return posts;
 }
