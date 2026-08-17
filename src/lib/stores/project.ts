@@ -578,6 +578,17 @@ export function setWallHidden(id: string, hidden: boolean) {
   }, hidden ? 'Hid wall' : 'Showed wall');
 }
 
+/**
+ * Turn the railing on a hidden wall on or off. A wall that is actually built
+ * needs none, so this only makes sense on a hidden (terrace/balcony) wall.
+ */
+export function setWallRailing(id: string, railing: boolean) {
+  mutate((f) => {
+    const w = f.walls.find((w) => w.id === id);
+    if (w) w.railing = railing || undefined;
+  }, railing ? 'Added wall railing' : 'Removed wall railing');
+}
+
 export function toggleWallHidden(id: string) {
   const f = get(activeFloor);
   const w = f?.walls.find((w) => w.id === id);

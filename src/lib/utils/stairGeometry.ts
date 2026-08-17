@@ -18,8 +18,8 @@
  *   - +x points right
  *   - +y points "down" the plan and maps to +z in 3D
  *
- * Every flight and landing fits exactly inside the footprint, so nothing ever
- * spills outside the box the user can click and select.
+ * Every flight, landing and railing fits exactly inside the footprint, so
+ * nothing ever spills outside the box the user can click and select.
  *
  * Flights always ascend towards -y (the direction the "UP" arrow points), and
  * turns then continue towards +x. `direction` does not change the geometry —
@@ -28,7 +28,8 @@
  * rises from the floor the stair belongs to, so it is never buried under the
  * ground plane.
  */
-import type { Stair } from '$lib/models/types';
+import type { Stair, StairRailingSides } from '$lib/models/types';
+import { railingHeight, RAILING_POST_THICKNESS, type RailingPoint } from '$lib/utils/railings';
 
 /** Height climbed by one flight of stairs (cm) — one storey. */
 export const STAIR_TOTAL_RISE = 260;
@@ -299,4 +300,179 @@ export function flightCrossCenter(flight: StairFlight): number {
 /** Width of a flight on the axis perpendicular to travel. */
 export function flightCrossWidth(flight: StairFlight): number {
   return flight.axis === 'x' ? flight.h : flight.w;
+}
+
+// ── Railings ─────────────────────────────────────────────────────────
+//
+// A railing follows the *open* edges of the walking surface, so it is derived
+// from the layout above rather than described separately: each run is one of
+// the polyline paths described in `railings.ts`, every point carrying the
+// height of the surface underneath it. Renderers put the handrail above that
+// line and drop posts down to it — the same treatment a terrace railing gets,
+// so the two look alike and 2D and 3D stay on the same railings.
+
+/** One hand of a stair, as you walk up it. */
+export type StairRailingSide = 'left' | 'right';
+
+export interface StairRailingRun {
+  side: StairRailingSide;
+  /**
+   * Path of the handrail from the foot of the stair to the top, running
+   * continuously through the landings.
+   */
+  points: RailingPoint[];
+}
+
+/** Which sides of a stair are railed — unset means both. */
+export function stairRailingSides(stair: Stair): StairRailingSides {
+  return stair.railings ?? 'both';
+}
+
+/** Handrail height above the walking surface for a stair (cm). */
+export function stairRailingHeight(stair: Stair): number {
+  return railingHeight(stair.railingHeight);
+}
+
+/** Height of the walking surface a fraction `t` (0 = foot, 1 = head) up a flight. */
+function flightBaseAt(flight: StairFlight, riserHeight: number, t: number): number {
+  return (flight.startRiser + flight.riserCount * t) * riserHeight;
+}
+
+/**
+ * Cross-axis coordinate of one hand of a flight. Facing the way the flight
+ * ascends, the left hand is towards -x when climbing towards -y and towards
+ * +x when climbing towards +y (and correspondingly for flights running along
+ * x), which is what keeps a railing on the same hand across a turn.
+ */
+function flightSideCoord(flight: StairFlight, side: StairRailingSide): number {
+  const leftIsMax = flight.axis === 'y' ? flight.dir === 1 : flight.dir === -1;
+  const lo = flight.axis === 'y' ? flight.x : flight.y;
+  const hi = lo + (flight.axis === 'y' ? flight.w : flight.h);
+  return (side === 'left') === leftIsMax ? hi : lo;
+}
+
+/** Point on one hand of a flight, a fraction `t` of the way up it. */
+function flightSidePoint(
+  flight: StairFlight,
+  side: StairRailingSide,
+  t: number,
+  riserHeight: number
+): RailingPoint {
+  const cross = flightSideCoord(flight, side);
+  const along = flightStartCoord(flight) + flight.dir * t * flightRunLength(flight);
+  const base = flightBaseAt(flight, riserHeight, t);
+  return flight.axis === 'x' ? { x: along, y: cross, base } : { x: cross, y: along, base };
+}
+
+/**
+ * Points a railing needs to cross a landing between two flights, on one hand.
+ *
+ * At a quarter-turn the two hands meet where their edges cross — the corner of
+ * the landing on the outside, the inside corner on the other hand. At a
+ * half-turn the flights are parallel: the outer railing has to travel around
+ * the far edge of the landing, while the inner one cuts straight across the
+ * open edge and needs nothing added.
+ */
+function landingRailingPoints(
+  landing: StairLanding,
+  below: StairFlight,
+  above: StairFlight,
+  side: StairRailingSide,
+  riserHeight: number
+): RailingPoint[] {
+  const base = landing.atRiser * riserHeight;
+  const crossBelow = flightSideCoord(below, side);
+  const crossAbove = flightSideCoord(above, side);
+
+  if (below.axis !== above.axis) {
+    // Quarter-turn: the two edge lines meet at a corner of the landing.
+    return below.axis === 'y'
+      ? [{ x: crossBelow, y: crossAbove, base }]
+      : [{ x: crossAbove, y: crossBelow, base }];
+  }
+
+  // Half-turn. The railing only wraps around the landing when it runs along
+  // the landing's own outer edge; otherwise it is the well side, and a
+  // straight segment across the open edge already joins the two flights.
+  const alongAxis = below.axis;
+  const lo = alongAxis === 'y' ? landing.y : landing.x;
+  const hi = lo + (alongAxis === 'y' ? landing.h : landing.w);
+  const crossLo = alongAxis === 'y' ? landing.x : landing.y;
+  const crossHi = crossLo + (alongAxis === 'y' ? landing.w : landing.h);
+  const onOuterEdge =
+    Math.abs(crossBelow - crossLo) < 1e-6 || Math.abs(crossBelow - crossHi) < 1e-6;
+  if (!onOuterEdge) return [];
+
+  // Far edge of the landing: the one the flight below points at.
+  const far = below.dir === 1 ? hi : lo;
+  return alongAxis === 'y'
+    ? [{ x: crossBelow, y: far, base }, { x: crossAbove, y: far, base }]
+    : [{ x: far, y: crossBelow, base }, { x: far, y: crossAbove, base }];
+}
+
+/** Drop points that repeat the previous one, which turns at a shared corner produce. */
+function dedupeRailingPoints(points: RailingPoint[]): RailingPoint[] {
+  const out: RailingPoint[] = [];
+  for (const p of points) {
+    const prev = out[out.length - 1];
+    if (prev && Math.abs(prev.x - p.x) < 1e-6 && Math.abs(prev.y - p.y) < 1e-6) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Compute the railings of a stair, in the same local coordinates as the
+ * layout. Only the sides the stair asks for are returned, so a stair with
+ * `railings: 'none'` yields nothing at all and renderers need no extra checks.
+ */
+export function buildStairRailings(
+  stair: Stair,
+  layout: StairLayout | SpiralStairLayout = buildStairLayout(stair)
+): StairRailingRun[] {
+  const sides = stairRailingSides(stair);
+  if (sides === 'none') return [];
+  // Keep posts inside the footprint, so the railing never spills outside the
+  // box the user can click and select.
+  const inset = RAILING_POST_THICKNESS / 2;
+
+  if (layout.type === 'spiral') {
+    // Only the outer edge of a spiral is open — the inner one is the centre
+    // post it winds around — so it has a single railing, on the walker's left.
+    const r = Math.max(layout.postRadius, layout.radius - inset);
+    const points: RailingPoint[] = [];
+    for (let i = 0; i <= layout.riserCount; i++) {
+      const a = layout.startAngle + (i / layout.riserCount) * layout.totalAngle;
+      points.push({ x: r * Math.cos(a), y: r * Math.sin(a), base: i * layout.riserHeight });
+    }
+    return [{ side: 'left', points }];
+  }
+
+  const hx = layout.footprint.width / 2 - inset;
+  const hy = layout.footprint.depth / 2 - inset;
+  const clamp = (p: RailingPoint): RailingPoint => ({
+    x: Math.max(-hx, Math.min(hx, p.x)),
+    y: Math.max(-hy, Math.min(hy, p.y)),
+    base: p.base
+  });
+
+  const runs: StairRailingRun[] = [];
+  for (const side of ['left', 'right'] as const) {
+    if (sides !== 'both' && sides !== side) continue;
+    const points: RailingPoint[] = [];
+    layout.flights.forEach((flight, i) => {
+      const landing = layout.landings[i - 1];
+      const previous = layout.flights[i - 1];
+      if (landing && previous) {
+        points.push(...landingRailingPoints(landing, previous, flight, side, layout.riserHeight));
+      }
+      points.push(
+        flightSidePoint(flight, side, 0, layout.riserHeight),
+        flightSidePoint(flight, side, 1, layout.riserHeight)
+      );
+    });
+    const path = dedupeRailingPoints(points.map(clamp));
+    if (path.length >= 2) runs.push({ side, points: path });
+  }
+  return runs;
 }

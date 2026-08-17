@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden, setWallRailing } from '$lib/stores/project';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
-  import { stairFootprint } from '$lib/utils/stairGeometry';
+  import { stairFootprint, stairRailingSides } from '$lib/utils/stairGeometry';
+  import { RAILING_HEIGHT, RAILING_MIN_HEIGHT } from '$lib/utils/railings';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import { base } from '$app/paths';
   import { onMount } from 'svelte';
@@ -43,6 +44,20 @@
     return type === 'spiral'
       ? `Depth of one tread, from the centre post outwards — overall footprint is ${size}`
       : `Width of one flight — overall footprint is ${size}`;
+  }
+  /**
+   * Railing sides are named as you walk up, which needs spelling out on the
+   * turning types where one side is the outside of the turn and the other the
+   * well the flights wrap around.
+   */
+  function stairRailingHint(stair: Stair): string {
+    const type = stair.stairType || 'straight';
+    if (stairRailingSides(stair) === 'none') return '';
+    if (type === 'l-shaped' || type === 'u-shaped') {
+      return 'Left is the outer side of the turn, right the well side — as you walk up.';
+    }
+    if (type === 'spiral') return '';
+    return 'Sides as you walk up. Take a side off where the flight runs against a wall.';
   }
   function unitLabel(): string {
     return settings.units === 'imperial' ? 'in' : 'cm';
@@ -402,16 +417,33 @@
         <button
           class="px-2 py-0.5 text-xs rounded {selectedWall.hidden ? 'bg-gray-100 text-gray-500 border border-gray-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'}"
           onclick={() => { if (selectedWall) setWallHidden(selectedWall.id, !selectedWall.hidden); }}
-          title="Hidden walls are not rendered in 3D and appear dashed in the plan. They still bound rooms and keep their dimensions — use this for terrace and balcony railings."
+          title="Hidden walls are not built in 3D and appear dashed in the plan. They still bound rooms and keep their dimensions — use this for a terrace or balcony perimeter, then give it a railing."
         >
           {selectedWall.hidden ? '🚫 Hidden' : '👁 Shown'}
         </button>
       </div>
       {#if selectedWall.hidden}
         <p class="text-[11px] text-gray-400 leading-snug -mt-1">
-          Not rendered in 3D or in exports; still bounds rooms and keeps its dimensions.
-          Doors and windows on this wall are hidden too.
+          The wall itself is not built: it still bounds rooms and keeps its dimensions, and its
+          doors and windows are hidden. A railing, if you add one, is built along its line.
         </p>
+        <!-- The wall stays unbuilt, but it can carry a railing where it stands -->
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gray-500">Railing</span>
+          <button
+            class="px-2 py-0.5 text-xs rounded {selectedWall.railing ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-gray-100 text-gray-500 border border-gray-200'}"
+            onclick={() => { if (selectedWall) setWallRailing(selectedWall.id, !selectedWall.railing); }}
+            title="Build a railing along this wall's line — for terrace and balcony perimeters. The wall itself stays unbuilt."
+          >
+            {selectedWall.railing ? '🚧 Railed' : '— None'}
+          </button>
+        </div>
+        {#if selectedWall.railing}
+          <label class="block">
+            <span class="text-xs text-gray-500">Railing height ({unitLabel()})</span>
+            <input type="number" value={displayValue(selectedWall.railingHeight ?? RAILING_HEIGHT)} min={displayValue(RAILING_MIN_HEIGHT)} oninput={(e) => updateWall(selectedWall!.id, { railingHeight: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+          </label>
+        {/if}
       {/if}
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-500">Curved</span>
@@ -938,6 +970,35 @@
         <span class="text-xs text-gray-500">Rotation (degrees)</span>
         <input type="number" value={selectedStair.rotation} oninput={(e) => updateStair(selectedStair!.id, { rotation: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
       </label>
+      <!-- Railings: on by default, and removable side by side -->
+      {#if selectedStair.stairType === 'spiral'}
+        <label class="block">
+          <span class="text-xs text-gray-500">Railing</span>
+          <div class="flex gap-2">
+            <button onclick={() => updateStair(selectedStair!.id, { railings: 'both' })} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {stairRailingSides(selectedStair) !== 'none' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">On</button>
+            <button onclick={() => updateStair(selectedStair!.id, { railings: 'none' })} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {stairRailingSides(selectedStair) === 'none' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">None</button>
+          </div>
+        </label>
+      {:else}
+        <label class="block">
+          <span class="text-xs text-gray-500">Railings</span>
+          <select value={stairRailingSides(selectedStair)} onchange={(e) => updateStair(selectedStair!.id, { railings: (e.target as HTMLSelectElement).value as any })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm">
+            <option value="both">Both sides</option>
+            <option value="left">Left side only</option>
+            <option value="right">Right side only</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+      {/if}
+      {#if stairRailingHint(selectedStair)}
+        <p class="text-xs text-gray-400 -mt-2">{stairRailingHint(selectedStair)}</p>
+      {/if}
+      {#if stairRailingSides(selectedStair) !== 'none'}
+        <label class="block">
+          <span class="text-xs text-gray-500">Railing height ({unitLabel()})</span>
+          <input type="number" value={displayValue(selectedStair.railingHeight ?? RAILING_HEIGHT)} min={displayValue(RAILING_MIN_HEIGHT)} oninput={(e) => updateStair(selectedStair!.id, { railingHeight: inputToCm(Number((e.target as HTMLInputElement).value)) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+        </label>
+      {/if}
       {/if}
     </div>
   {:else if selectedColumn}

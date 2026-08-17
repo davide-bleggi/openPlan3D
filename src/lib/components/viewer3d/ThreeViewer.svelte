@@ -19,12 +19,23 @@
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
   import {
     buildStairLayout,
+    buildStairRailings,
     flightCrossCenter,
     flightCrossWidth,
     flightStartCoord,
     flightTreadDepth,
+    stairRailingHeight,
     type StairFlight
   } from '$lib/utils/stairGeometry';
+  import {
+    railingPostPositions,
+    RAILING_POST_THICKNESS,
+    RAILING_RAIL_THICKNESS,
+    wallHasRailing,
+    wallRailingHeight,
+    wallRailingPath,
+    type RailingPoint
+  } from '$lib/utils/railings';
   import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
   import {
     buildWallSegments,
@@ -1048,6 +1059,58 @@
     }
   }
 
+  /** The one look every railing in the scene shares: wooden rail, dark posts. */
+  function createRailingMaterials() {
+    return {
+      railMat: new THREE.MeshStandardMaterial({ color: 0x8b6b45, roughness: 0.6 }),
+      postMat: new THREE.MeshStandardMaterial({ color: 0x4b5158, roughness: 0.45, metalness: 0.35 })
+    };
+  }
+
+  /**
+   * Build railings from their paths: a handrail following each one, and posts
+   * dropping from it to the surface below. The paths already carry that
+   * surface's height at every point, so the handrail simply rides `height`
+   * above it — level along a terrace, parallel to the pitch on a stair flight.
+   */
+  function buildRailingMeshes(
+    group: THREE.Group,
+    railMat: THREE.MeshStandardMaterial,
+    postMat: THREE.MeshStandardMaterial,
+    paths: RailingPoint[][],
+    height: number
+  ) {
+    const rt = RAILING_RAIL_THICKNESS;
+    const pt = RAILING_POST_THICKNESS;
+    const railAxis = new THREE.Vector3(1, 0, 0);
+
+    for (const path of paths) {
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const from = new THREE.Vector3(a.x, a.base + height, a.y);
+        const to = new THREE.Vector3(b.x, b.base + height, b.y);
+        const span = to.clone().sub(from);
+        const len = span.length();
+        if (len < 1e-6) continue;
+        // Overlap the joints by one thickness so corners and pitch changes
+        // close up instead of leaving a notch.
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(len + rt, rt, rt), railMat);
+        rail.position.copy(from).addScaledVector(span, 0.5);
+        rail.quaternion.setFromUnitVectors(railAxis, span.clone().normalize());
+        rail.castShadow = true;
+        group.add(rail);
+      }
+
+      for (const post of railingPostPositions(path)) {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(pt, height, pt), postMat);
+        mesh.position.set(post.x, post.base + height / 2, post.y);
+        mesh.castShadow = true;
+        group.add(mesh);
+      }
+    }
+  }
+
   function buildStairs(floor: Floor) {
     if (!floor.stairs) return;
     for (const stair of floor.stairs) {
@@ -1112,6 +1175,20 @@
           mesh.receiveShadow = true;
           stairGroup.add(mesh);
         }
+      }
+
+      // Railings on whichever open sides the stair asks for — none of them if
+      // the user has taken them off.
+      const railings = buildStairRailings(stair, layout);
+      if (railings.length) {
+        const { railMat, postMat } = createRailingMaterials();
+        buildRailingMeshes(
+          stairGroup,
+          railMat,
+          postMat,
+          railings.map((run) => run.points),
+          stairRailingHeight(stair)
+        );
       }
 
       // `direction` is a plan annotation only: a "down" stair is the same
@@ -1432,8 +1509,15 @@
       computeWallJoins(floor.walls, (w) => Math.max(w.thickness, WALL_THICKNESS) + 2);
 
     for (const wall of floor.walls) {
-      // Hidden walls (terrace/balcony perimeters) are structural only — no geometry
-      if (wall.hidden) continue;
+      // Hidden walls (terrace/balcony perimeters) are structural only — no
+      // geometry, except the railing one can carry in place of the wall.
+      if (wall.hidden) {
+        if (wallHasRailing(wall)) {
+          const { railMat, postMat } = createRailingMaterials();
+          buildRailingMeshes(wallGroup, railMat, postMat, [wallRailingPath(wall)], wallRailingHeight(wall));
+        }
+        continue;
+      }
 
       // Resolve per-side materials: interior and exterior can have independent color/texture
       const DEFAULT_2D_COLORS = ['#cccccc', '#888888', '#444444', '#404040'];

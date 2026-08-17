@@ -16,6 +16,15 @@ export interface Wall {
    * terrace and balcony perimeters that only have railings.
    */
   hidden?: boolean;
+  /**
+   * Railing along this wall's line: the wall itself stays unbuilt, but a
+   * balustrade runs where it stands. Only meaningful on a hidden wall — a wall
+   * that is actually built already stops you walking off. Off by default, so a
+   * terrace perimeter is bare until you ask for the railing.
+   */
+  railing?: boolean;
+  /** Handrail height above the floor (cm). Omitted means 90. */
+  railingHeight?: number;
   texture?: string;
   /** Interior-specific overrides (if different from exterior) */
   interiorColor?: string;
@@ -82,6 +91,14 @@ export interface ElementGroup {
 
 export type StairType = 'straight' | 'l-shaped' | 'u-shaped' | 'spiral';
 
+/**
+ * Sides of a stair that carry a railing, named as you walk *up* the flight:
+ * on an L/U-shaped stair 'left' is the outer side the turn wraps around and
+ * 'right' the inner one along the well. A spiral only has an outer edge — the
+ * inner one is its centre post — so it is either railed or not.
+ */
+export type StairRailingSides = 'both' | 'left' | 'right' | 'none';
+
 export interface Stair {
   id: string;
   position: Point;
@@ -91,6 +108,14 @@ export interface Stair {
   riserCount: number; // default 14
   direction: 'up' | 'down';
   stairType: StairType; // default 'straight'
+  /**
+   * Which open sides get a railing. Omitted means both, so stairs are railed
+   * by default — set 'none' to take the railings off a flight that runs
+   * between two walls.
+   */
+  railings?: StairRailingSides;
+  /** Handrail height above the walking surface (cm). Omitted means 90. */
+  railingHeight?: number;
 }
 
 export interface Column {
