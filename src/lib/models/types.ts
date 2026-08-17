@@ -82,6 +82,14 @@ export interface ElementGroup {
 
 export type StairType = 'straight' | 'l-shaped' | 'u-shaped' | 'spiral';
 
+/**
+ * Sides of a stair that carry a railing, named as you walk *up* the flight:
+ * on an L/U-shaped stair 'left' is the outer side the turn wraps around and
+ * 'right' the inner one along the well. A spiral only has an outer edge — the
+ * inner one is its centre post — so it is either railed or not.
+ */
+export type StairRailingSides = 'both' | 'left' | 'right' | 'none';
+
 export interface Stair {
   id: string;
   position: Point;
@@ -91,6 +99,14 @@ export interface Stair {
   riserCount: number; // default 14
   direction: 'up' | 'down';
   stairType: StairType; // default 'straight'
+  /**
+   * Which open sides get a railing. Omitted means both, so stairs are railed
+   * by default — set 'none' to take the railings off a flight that runs
+   * between two walls.
+   */
+  railings?: StairRailingSides;
+  /** Handrail height above the walking surface (cm). Omitted means 90. */
+  railingHeight?: number;
 }
 
 export interface Column {

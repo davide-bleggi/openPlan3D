@@ -16,10 +16,15 @@ import { getEntourageDef } from '$lib/utils/entourageCatalog';
 import type { EntourageItem, CustomEntourageDef } from '$lib/models/types';
 import {
   buildStairLayout,
+  buildStairRailings,
   flightCrossCenter,
   flightRunLength,
   flightStartCoord,
-  flightTreadDepth
+  flightTreadDepth,
+  railingPostPositions,
+  STAIR_RAILING_POST_SPACING,
+  STAIR_RAILING_POST_THICKNESS,
+  STAIR_RAILING_RAIL_THICKNESS
 } from '$lib/utils/stairGeometry';
 
 // ── Wall geometry helpers ────────────────────────────────────────────
@@ -1142,6 +1147,40 @@ export function drawStair(cs: CanvasState, stair: Stair, selected: boolean): voi
     // The arrow always points the way you walk: up the flights, or down them.
     drawStairPath(stair.direction === 'up' ? path : [...path].reverse());
     drawStairLabelLocal();
+  }
+
+  // Railings, drawn last so their line stays legible over the treads. In plan
+  // they read as the handrail line plus a tick per post, the same runs the 3D
+  // view builds its balustrade from.
+  const railings = buildStairRailings(stair, layout);
+  if (railings.length) {
+    // Deep blue when selected: darker than the selection outline it sits on,
+    // so the railing stays readable while the stair is being edited.
+    ctx.strokeStyle = selected ? '#1e3a8a' : '#4b5563';
+    ctx.lineWidth = Math.max(1.2, STAIR_RAILING_RAIL_THICKNESS * zoom);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (const run of railings) {
+      ctx.beginPath();
+      run.points.forEach((p, i) => {
+        if (i === 0) ctx.moveTo(p.x * zoom, p.y * zoom);
+        else ctx.lineTo(p.x * zoom, p.y * zoom);
+      });
+      ctx.stroke();
+    }
+    // A tick per post — the dotted read that tells a balustrade apart from a
+    // plain edge. Skipped when zoomed out far enough that they would merge.
+    const postSize = Math.max(1.5, STAIR_RAILING_POST_THICKNESS * zoom);
+    if (STAIR_RAILING_POST_SPACING * zoom >= 4) {
+      ctx.fillStyle = selected ? '#172554' : '#374151';
+      for (const run of railings) {
+        for (const post of railingPostPositions(run)) {
+          ctx.fillRect(post.x * zoom - postSize / 2, post.y * zoom - postSize / 2, postSize, postSize);
+        }
+      }
+    }
+    ctx.lineJoin = 'miter';
+    ctx.lineCap = 'butt';
   }
 
   if (selected) {

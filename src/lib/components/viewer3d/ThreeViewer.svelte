@@ -19,11 +19,17 @@
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
   import {
     buildStairLayout,
+    buildStairRailings,
     flightCrossCenter,
     flightCrossWidth,
     flightStartCoord,
     flightTreadDepth,
-    type StairFlight
+    railingPostPositions,
+    stairRailingHeight,
+    STAIR_RAILING_POST_THICKNESS,
+    STAIR_RAILING_RAIL_THICKNESS,
+    type StairFlight,
+    type StairRailingRun
   } from '$lib/utils/stairGeometry';
   import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
   import {
@@ -1048,6 +1054,50 @@
     }
   }
 
+  /**
+   * Build the railings of a stair: a handrail following each run, and posts
+   * dropping from it to the treads or landing below. The runs already carry the
+   * surface height at every point, so the handrail simply rides that line
+   * `height` above it and stays parallel to the pitch of the flight.
+   */
+  function buildStairRailingMeshes(
+    group: THREE.Group,
+    railMat: THREE.MeshStandardMaterial,
+    postMat: THREE.MeshStandardMaterial,
+    runs: StairRailingRun[],
+    height: number
+  ) {
+    const rt = STAIR_RAILING_RAIL_THICKNESS;
+    const pt = STAIR_RAILING_POST_THICKNESS;
+    const railAxis = new THREE.Vector3(1, 0, 0);
+
+    for (const run of runs) {
+      for (let i = 0; i < run.points.length - 1; i++) {
+        const a = run.points[i];
+        const b = run.points[i + 1];
+        const from = new THREE.Vector3(a.x, a.base + height, a.y);
+        const to = new THREE.Vector3(b.x, b.base + height, b.y);
+        const span = to.clone().sub(from);
+        const len = span.length();
+        if (len < 1e-6) continue;
+        // Overlap the joints by one thickness so corners and pitch changes
+        // close up instead of leaving a notch.
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(len + rt, rt, rt), railMat);
+        rail.position.copy(from).addScaledVector(span, 0.5);
+        rail.quaternion.setFromUnitVectors(railAxis, span.clone().normalize());
+        rail.castShadow = true;
+        group.add(rail);
+      }
+
+      for (const post of railingPostPositions(run)) {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(pt, height, pt), postMat);
+        mesh.position.set(post.x, post.base + height / 2, post.y);
+        mesh.castShadow = true;
+        group.add(mesh);
+      }
+    }
+  }
+
   function buildStairs(floor: Floor) {
     if (!floor.stairs) return;
     for (const stair of floor.stairs) {
@@ -1112,6 +1162,16 @@
           mesh.receiveShadow = true;
           stairGroup.add(mesh);
         }
+      }
+
+      // Railings on whichever open sides the stair asks for — none of them if
+      // the user has taken them off.
+      const railings = buildStairRailings(stair, layout);
+      if (railings.length) {
+        // Wooden handrail on slim dark posts — the usual indoor balustrade.
+        const railMat = new THREE.MeshStandardMaterial({ color: 0x8b6b45, roughness: 0.6 });
+        const postMat = new THREE.MeshStandardMaterial({ color: 0x4b5158, roughness: 0.45, metalness: 0.35 });
+        buildStairRailingMeshes(stairGroup, railMat, postMat, railings, stairRailingHeight(stair));
       }
 
       // `direction` is a plan annotation only: a "down" stair is the same

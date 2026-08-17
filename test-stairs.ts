@@ -1,20 +1,28 @@
 /**
  * Test script: verify U/L-shaped stair layouts are connected and stay inside
- * the stair footprint (the box used for hit-testing and selection).
+ * the stair footprint (the box used for hit-testing and selection), and that
+ * the railings follow the open edges of the surface you actually walk on.
  * Run with: npx tsx test-stairs.ts
  */
 import {
   buildStairLayout,
+  buildStairRailings,
   flightCrossCenter,
   flightRunLength,
   flightStartCoord,
   flightTreadDepth,
+  railingPostPositions,
   spiralRadius,
   stairFootprint,
+  stairRailingHeight,
   SPIRAL_POST_RATIO,
+  STAIR_RAILING_HEIGHT,
+  STAIR_RAILING_POST_SPACING,
+  STAIR_RAILING_POST_THICKNESS,
   STAIR_TOTAL_RISE,
   type StairFlight,
   type StairLayout,
+  type StairRailingRun,
   type StairRect
 } from './src/lib/utils/stairGeometry.js';
 import type { Stair, StairType } from './src/lib/models/types.js';
@@ -244,6 +252,180 @@ for (const width of [60, 100, 160]) {
   );
   check(`spiral ${width}: top tread at storey height`,
     Math.abs(layout.riserCount * layout.riserHeight - STAIR_TOTAL_RISE) < 1e-9);
+}
+
+// ── Railings ────────────────────────────────────────────────────────
+//
+// A railing has to sit on the walking surface at every point (no floating or
+// buried handrails), stay inside the footprint, and stay on one hand of the
+// stair all the way up — including across the landings of L/U-shaped stairs.
+
+/** Every rectangle of the stair you can stand on, with its surface height. */
+function surfaces(layout: StairLayout): Array<{ rect: StairRect; from: number; to: number }> {
+  const out: Array<{ rect: StairRect; from: number; to: number }> = [];
+  for (const f of layout.flights) {
+    out.push({
+      rect: f,
+      from: f.startRiser * layout.riserHeight,
+      to: (f.startRiser + f.riserCount) * layout.riserHeight
+    });
+  }
+  for (const l of layout.landings) {
+    const h = l.atRiser * layout.riserHeight;
+    out.push({ rect: l, from: h, to: h });
+  }
+  return out;
+}
+
+/** Does a railing point rest on some walkable surface, at that surface's height? */
+function onSurface(p: { x: number; y: number; base: number }, layout: StairLayout): boolean {
+  const tol = STAIR_RAILING_POST_THICKNESS / 2 + 1e-6;
+  return surfaces(layout).some(({ rect, from, to }) => {
+    if (distToRect(p, rect) > tol) return false;
+    const lo = Math.min(from, to) - 1e-6;
+    const hi = Math.max(from, to) + 1e-6;
+    return p.base >= lo && p.base <= hi;
+  });
+}
+
+console.log('=== railings ===');
+for (const type of types) {
+  for (const [width, depth] of sizes) {
+    for (const riserCount of [3, 14, 22]) {
+      const stair = makeStair({ stairType: type, width, depth, riserCount });
+      const layout = buildStairLayout(stair) as StairLayout;
+      const fp = layout.footprint;
+      const label = `${type} ${width}x${depth} / ${riserCount} risers`;
+      const runs = buildStairRailings(stair, layout);
+
+      check(`${label}: railed on both hands by default`,
+        runs.length === 2 && runs.some((r) => r.side === 'left') && runs.some((r) => r.side === 'right'),
+        JSON.stringify(runs.map((r) => r.side)));
+
+      for (const run of runs) {
+        const pts = run.points;
+        check(`${label} ${run.side}: railing has a path`, pts.length >= 2, `${pts.length} points`);
+        check(`${label} ${run.side}: inside the footprint`,
+          pts.every((p) => Math.abs(p.x) <= fp.width / 2 + EPS && Math.abs(p.y) <= fp.depth / 2 + EPS),
+          JSON.stringify(pts.filter((p) => Math.abs(p.x) > fp.width / 2 + EPS || Math.abs(p.y) > fp.depth / 2 + EPS)));
+        check(`${label} ${run.side}: every point rests on the stair`,
+          pts.every((p) => onSurface(p, layout)),
+          JSON.stringify(pts.filter((p) => !onSurface(p, layout))));
+        check(`${label} ${run.side}: climbs from the floor to the storey above`,
+          Math.abs(pts[0].base) < 1e-6 && Math.abs(pts[pts.length - 1].base - STAIR_TOTAL_RISE) < 1e-6,
+          `${pts[0].base} -> ${pts[pts.length - 1].base}`);
+        check(`${label} ${run.side}: never descends along the run`,
+          pts.every((p, i) => i === 0 || p.base >= pts[i - 1].base - 1e-6));
+        check(`${label} ${run.side}: no zero-length segment`,
+          pts.every((p, i) => i === 0 || Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y) > 1e-6));
+
+        // Posts: one at each end, one at every corner, and none further apart
+        // than the target spacing.
+        const posts = railingPostPositions(run);
+        const first = posts[0];
+        const last = posts[posts.length - 1];
+        check(`${label} ${run.side}: posts start and end the railing`,
+          Math.hypot(first.x - pts[0].x, first.y - pts[0].y) < 1e-6 &&
+            Math.hypot(last.x - pts[pts.length - 1].x, last.y - pts[pts.length - 1].y) < 1e-6);
+        check(`${label} ${run.side}: posts respect the spacing`,
+          posts.every((p, i) => i === 0 ||
+            Math.hypot(p.x - posts[i - 1].x, p.y - posts[i - 1].y) <= STAIR_RAILING_POST_SPACING + 1e-6));
+        check(`${label} ${run.side}: a post at every corner`,
+          pts.every((v) => posts.some((p) => Math.hypot(p.x - v.x, p.y - v.y) < 1e-6)));
+        check(`${label} ${run.side}: posts rest on the stair`,
+          posts.every((p) => onSurface(p, layout)),
+          JSON.stringify(posts.filter((p) => !onSurface(p, layout)).slice(0, 3)));
+      }
+
+      // The two hands must not be the same line, or one side of the stair
+      // would be left open with two railings stacked on the other.
+      if (runs.length === 2) {
+        const [a, b] = runs;
+        check(`${label}: the two railings are on opposite hands`,
+          JSON.stringify(a.points) !== JSON.stringify(b.points));
+        // First flight: left hand towards -x, right hand towards +x, since
+        // flights always start by climbing towards -y.
+        const left = runs.find((r) => r.side === 'left')!;
+        const right = runs.find((r) => r.side === 'right')!;
+        check(`${label}: left hand is the -x side at the foot`,
+          left.points[0].x < right.points[0].x,
+          `left ${left.points[0].x} vs right ${right.points[0].x}`);
+      }
+    }
+  }
+}
+
+// Turning stairs: the railing must actually go round the turn rather than stop
+// at the landing, so it needs more than the two ends of a single flight.
+console.log('=== railings across turns ===');
+for (const type of ['l-shaped', 'u-shaped'] as StairType[]) {
+  const stair = makeStair({ stairType: type });
+  const layout = buildStairLayout(stair) as StairLayout;
+  const runs = buildStairRailings(stair, layout);
+  const landingHeight = layout.landings[0].atRiser * layout.riserHeight;
+  for (const run of runs) {
+    check(`${type} ${run.side}: railing turns with the stair`, run.points.length >= 3,
+      JSON.stringify(run.points));
+    check(`${type} ${run.side}: railing passes the landing at landing height`,
+      run.points.some((p) => Math.abs(p.base - landingHeight) < 1e-6));
+  }
+  // The outer railing wraps around the landing, so it takes the longer path.
+  const left = runs.find((r) => r.side === 'left')!;
+  const right = runs.find((r) => r.side === 'right')!;
+  const len = (r: StairRailingRun) =>
+    r.points.reduce((a, p, i) => (i === 0 ? 0 : a + Math.hypot(p.x - r.points[i - 1].x, p.y - r.points[i - 1].y)), 0);
+  check(`${type}: outer railing is the longer one`, len(left) > len(right),
+    `left ${len(left).toFixed(1)} vs right ${len(right).toFixed(1)}`);
+}
+
+// Spiral: one railing, along the open outer edge, following the treads up.
+console.log('=== spiral railing ===');
+for (const width of [60, 100, 160]) {
+  const stair = makeStair({ stairType: 'spiral', width });
+  const layout = buildStairLayout(stair);
+  if (layout.type !== 'spiral') continue;
+  const runs = buildStairRailings(stair, layout);
+  check(`spiral ${width}: a single railing on the open outer edge`, runs.length === 1,
+    JSON.stringify(runs.map((r) => r.side)));
+  const pts = runs[0]?.points ?? [];
+  check(`spiral ${width}: one point per tread edge`, pts.length === layout.riserCount + 1,
+    `${pts.length} points for ${layout.riserCount} treads`);
+  check(`spiral ${width}: follows the outer edge, inside the footprint`,
+    pts.every((p) => {
+      const r = Math.hypot(p.x, p.y);
+      return r <= layout.radius + EPS && r > layout.postRadius;
+    }));
+  check(`spiral ${width}: climbs from the floor to the storey above`,
+    Math.abs(pts[0].base) < 1e-6 && Math.abs(pts[pts.length - 1].base - STAIR_TOTAL_RISE) < 1e-6);
+  check(`spiral ${width}: rises one riser per tread`,
+    pts.every((p, i) => i === 0 || Math.abs(p.base - pts[i - 1].base - layout.riserHeight) < 1e-9));
+}
+
+// Railings are removable, side by side, and their height is configurable.
+console.log('=== railing options ===');
+for (const type of [...types, 'spiral' as StairType]) {
+  check(`${type}: 'none' removes every railing`,
+    buildStairRailings(makeStair({ stairType: type, railings: 'none' })).length === 0);
+  const dflt = buildStairRailings(makeStair({ stairType: type }));
+  const explicitBoth = buildStairRailings(makeStair({ stairType: type, railings: 'both' }));
+  check(`${type}: unset railings means both`, JSON.stringify(dflt) === JSON.stringify(explicitBoth));
+  if (type === 'spiral') continue;
+  for (const side of ['left', 'right'] as const) {
+    const runs = buildStairRailings(makeStair({ stairType: type, railings: side }));
+    check(`${type}: '${side}' keeps just that hand`,
+      runs.length === 1 && runs[0].side === side, JSON.stringify(runs.map((r) => r.side)));
+    const both = dflt.find((r) => r.side === side)!;
+    check(`${type}: '${side}' is the same railing as with both`,
+      JSON.stringify(runs[0].points) === JSON.stringify(both.points));
+  }
+}
+{
+  check('railing height defaults to the standard height',
+    stairRailingHeight(makeStair({})) === STAIR_RAILING_HEIGHT);
+  check('railing height is configurable', stairRailingHeight(makeStair({ railingHeight: 110 })) === 110);
+  check('silly railing heights fall back to something usable',
+    stairRailingHeight(makeStair({ railingHeight: 0 })) === STAIR_RAILING_HEIGHT &&
+      stairRailingHeight(makeStair({ railingHeight: 2 })) >= 30);
 }
 
 console.log(failures === 0 ? '\nAll stair layout checks passed' : `\n${failures} check(s) FAILED`);

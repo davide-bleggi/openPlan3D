@@ -23,7 +23,7 @@ Design floor plans in an intuitive 2D editor, then instantly preview them in a f
 - **Walls** — Click-to-place with automatic snapping and angle constraints
 - **Invisible walls** — Hide any wall from the 3D view and exports while it keeps bounding rooms, so terraces and balconies can be drawn with railing-only perimeters
 - **Doors & Windows** — Multiple styles (single, double, sliding, pocket, bi-fold, french doors; casement, bay, picture windows)
-- **Stairs** — Straight, L-shaped, and U-shaped with configurable dimensions
+- **Stairs** — Straight, L-shaped, U-shaped and spiral, with railings on the open sides and configurable dimensions
 - **Rooms** — Auto-detected from walls with customizable labels and colors
 
 ### 🛋️ Furniture Library
