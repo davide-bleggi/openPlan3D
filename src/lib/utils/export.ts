@@ -338,9 +338,9 @@ export function exportAsSVG(project: Project) {
     }
 
     const doorType = d.type || 'single';
-    // Glazed leaves (French door, porta finestra) read as a pair of rails with
-    // the glass between them; a solid leaf stays one heavy line.
-    const glazed = doorType === 'french' || doorType === 'french-window';
+    // The porta finestra's glazed leaves read as a pair of rails with the glass
+    // between them; a solid leaf stays one heavy line.
+    const glazed = doorType === 'french';
     const svgLeaf = (hx: number, hy: number, ex: number, ey: number) => {
       if (!glazed) {
         return `  <line x1="${n2(hx)}" y1="${n2(hy)}" x2="${n2(ex)}" y2="${n2(ey)}" stroke="#444" stroke-width="2.5"/>\n`;
@@ -378,7 +378,7 @@ export function exportAsSVG(project: Project) {
       const panelAngle = doorType === 'pocket' ? sa : ea;
       paths += svgLeaf(hx, hy, hx + r * Math.cos(panelAngle), hy + r * Math.sin(panelAngle));
       paths += `  <circle cx="${n2(hx)}" cy="${n2(hy)}" r="2.5" fill="#444"/>\n`;
-    } else if (doorType === 'double' || doorType === 'french' || doorType === 'french-window') {
+    } else if (doorType === 'double' || doorType === 'french') {
       const r = hw;
       for (const side of [-1, 1] as const) {
         const hx = px + ux * hw * side;

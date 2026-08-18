@@ -175,7 +175,7 @@
     for (const d of doors) {
       const h = doorOpeningHeight(d, wallH);
       rects.push({
-        id: d.id, kind: 'door', glazed: d.type === 'french-window',
+        id: d.id, kind: 'door', glazed: d.type === 'french',
         x: d.position * wallLen - d.width / 2, y: 0, w: d.width, h,
       });
     }

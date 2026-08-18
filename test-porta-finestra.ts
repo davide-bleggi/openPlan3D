@@ -1,6 +1,6 @@
 /**
- * Test script: the porta finestra ('french-window' door) is carved like a door,
- * not like a window (issue #17).
+ * Test script: the porta finestra ('french' door) is carved like a door, not
+ * like a window (issue #17).
  *
  * A porta finestra is a full-height glazed door onto a balcony or terrace. It
  * is glazed like a window, but it stands on the floor: its opening must run
@@ -30,10 +30,10 @@ function check(label: string, condition: boolean, detail = '') {
   }
 }
 
-function portaFinestra(position: number, width = 140, height = 230): Door {
+function portaFinestra(position: number, width = 150, height = 230): Door {
   return {
     id: `pf-${position}`, wallId: 'w1', position, width, height,
-    type: 'french-window', swingDirection: 'left', flipSide: false,
+    type: 'french', swingDirection: 'left', flipSide: false,
   };
 }
 
@@ -87,8 +87,8 @@ console.log('\n2. Unlike a window of the same size, which keeps its apron');
 
 console.log('\n3. Head height');
 {
-  check('uses the door\'s own height', doorOpeningHeight(portaFinestra(0.5, 140, 230), WALL_H) === 230);
-  check('clamps to a lower wall', doorOpeningHeight(portaFinestra(0.5, 140, 230), 220) === 220);
+  check('uses the door\'s own height', doorOpeningHeight(portaFinestra(0.5, 150, 230), WALL_H) === 230);
+  check('clamps to a lower wall', doorOpeningHeight(portaFinestra(0.5, 150, 230), 220) === 220);
 }
 
 console.log(allPassed ? '\nAll checks passed.\n' : '\nSome checks FAILED.\n');

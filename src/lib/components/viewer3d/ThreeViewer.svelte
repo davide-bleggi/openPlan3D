@@ -1735,7 +1735,7 @@
 
       // A porta finestra is trimmed like a window — painted frame, not stained
       // joinery — so its jambs and header take the lighter colour.
-      const isGlazedDoor = door.type === 'french-window';
+      const isGlazedDoor = door.type === 'french';
       const frameMat = new THREE.MeshStandardMaterial({
         color: isGlazedDoor ? 0xe8e4dc : 0x6b4423,
         roughness: isGlazedDoor ? 0.4 : 0.6,
@@ -1790,7 +1790,7 @@
 
       if (door.type === 'opening') {
         // Plain doorway — jambs and header only, no door leaf
-      } else if (door.type === 'french-window') {
+      } else if (door.type === 'french') {
         // Porta finestra — a pair of glazed leaves standing on the floor, ajar
         // by the same 15° as a swing door. Each leaf is built in its own group
         // with the hinge at local x = 0 and the meeting stile at x = leafW, so
