@@ -144,7 +144,7 @@
     { type: 'single', name: 'Single', desc: '90cm swing', icon: 'M6 3h12v18H6z' },
     { type: 'double', name: 'Double', desc: '150cm swing', icon: 'M3 3h8v18H3zM13 3h8v18h-8z' },
     { type: 'sliding', name: 'Sliding', desc: '180cm slide', icon: 'M3 6h18v12H3z' },
-    { type: 'french', name: 'French', desc: '150cm glass', icon: 'M3 3h8v18H3zM13 3h8v18h-8z' },
+    { type: 'french', name: 'French Door', desc: '150cm glazed', icon: 'M3 3h8v18H3zM13 3h8v18h-8zM3 9h8M13 9h8M3 15h8M13 15h8' },
     { type: 'pocket', name: 'Pocket', desc: '90cm recess', icon: 'M6 3h12v18H6z' },
     { type: 'bifold', name: 'Bifold', desc: '180cm fold', icon: 'M3 3h5v18H3zM9 3h6v18H9zM16 3h5v18h-5z' },
     { type: 'opening', name: 'Doorway', desc: '100cm open', icon: 'M6 3h2v18H6zM16 3h2v18h-2z' },

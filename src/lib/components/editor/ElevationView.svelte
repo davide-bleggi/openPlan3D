@@ -161,6 +161,8 @@
   interface OpeningRect {
     id: string;
     kind: 'door' | 'window';
+    /** true for a glazed door leaf (French door), drawn with glass */
+    glazed?: boolean;
     /** left edge along wall, cm */ x: number;
     /** bottom above floor, cm */ y: number;
     w: number;
@@ -172,7 +174,10 @@
     const rects: OpeningRect[] = [];
     for (const d of doors) {
       const h = doorOpeningHeight(d, wallH);
-      rects.push({ id: d.id, kind: 'door', x: d.position * wallLen - d.width / 2, y: 0, w: d.width, h });
+      rects.push({
+        id: d.id, kind: 'door', glazed: d.type === 'french',
+        x: d.position * wallLen - d.width / 2, y: 0, w: d.width, h,
+      });
     }
     for (const w of windows) {
       const sill = w.sillHeight ?? DEFAULT_SILL;
@@ -387,11 +392,21 @@
       const pw = r.w * scale;
       const ph = r.h * scale;
       if (r.kind === 'door') {
-        ctx.fillStyle = '#fef3c7';
+        // A French door is glazed: it keeps the door outline but shows glass
+        // and a meeting stile instead of a solid leaf.
+        ctx.fillStyle = r.glazed ? '#e0f2fe' : '#fef3c7';
         ctx.fillRect(px, py, pw, ph);
         ctx.strokeStyle = '#b45309';
         ctx.lineWidth = 1.5;
         ctx.strokeRect(px, py, pw, ph);
+        if (r.glazed) {
+          // Meeting stile between the two leaves, and a rail across each
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(px + pw / 2, py); ctx.lineTo(px + pw / 2, py + ph);
+          ctx.moveTo(px, py + ph * 0.75); ctx.lineTo(px + pw, py + ph * 0.75);
+          ctx.stroke();
+        }
         // Door handle hint
         ctx.fillStyle = '#b45309';
         ctx.beginPath();

@@ -338,6 +338,22 @@ export function exportAsSVG(project: Project) {
     }
 
     const doorType = d.type || 'single';
+    // A French door's glazed leaves read as a pair of rails with the glass
+    // between them; a solid leaf stays one heavy line.
+    const glazed = doorType === 'french';
+    const svgLeaf = (hx: number, hy: number, ex: number, ey: number) => {
+      if (!glazed) {
+        return `  <line x1="${n2(hx)}" y1="${n2(hy)}" x2="${n2(ex)}" y2="${n2(ey)}" stroke="#444" stroke-width="2.5"/>\n`;
+      }
+      const lx = ex - hx, ly = ey - hy;
+      const len = Math.hypot(lx, ly) || 1;
+      const ox = (-ly / len) * 1.6, oy = (lx / len) * 1.6;
+      let out = '';
+      for (const sgn of [-1, 1]) {
+        out += `  <line x1="${n2(hx + ox * sgn)}" y1="${n2(hy + oy * sgn)}" x2="${n2(ex + ox * sgn)}" y2="${n2(ey + oy * sgn)}" stroke="#444" stroke-width="1.2"/>\n`;
+      }
+      return out;
+    };
     const svgArc = (hx: number, hy: number, r: number, a0: number, a1: number) => {
       const x0 = hx + r * Math.cos(a0), y0 = hy + r * Math.sin(a0);
       const x1 = hx + r * Math.cos(a1), y1 = hy + r * Math.sin(a1);
@@ -360,7 +376,7 @@ export function exportAsSVG(project: Project) {
         paths += `  <path d="${arc.path}" fill="none" stroke="#666" stroke-width="1"/>\n`;
       }
       const panelAngle = doorType === 'pocket' ? sa : ea;
-      paths += `  <line x1="${n2(hx)}" y1="${n2(hy)}" x2="${n2(hx + r * Math.cos(panelAngle))}" y2="${n2(hy + r * Math.sin(panelAngle))}" stroke="#444" stroke-width="2.5"/>\n`;
+      paths += svgLeaf(hx, hy, hx + r * Math.cos(panelAngle), hy + r * Math.sin(panelAngle));
       paths += `  <circle cx="${n2(hx)}" cy="${n2(hy)}" r="2.5" fill="#444"/>\n`;
     } else if (doorType === 'double' || doorType === 'french') {
       const r = hw;
@@ -372,7 +388,7 @@ export function exportAsSVG(project: Project) {
         const ea = sa + arcSwing * sideFlip * (Math.PI / 2);
         const arc = svgArc(hx, hy, r, sa, ea);
         paths += `  <path d="${arc.path}" fill="none" stroke="#666" stroke-width="1"/>\n`;
-        paths += `  <line x1="${n2(hx)}" y1="${n2(hy)}" x2="${n2(hx + r * Math.cos(ea))}" y2="${n2(hy + r * Math.sin(ea))}" stroke="#444" stroke-width="2.5"/>\n`;
+        paths += svgLeaf(hx, hy, hx + r * Math.cos(ea), hy + r * Math.sin(ea));
         paths += `  <circle cx="${n2(hx)}" cy="${n2(hy)}" r="2" fill="#444"/>\n`;
       }
     } else if (doorType === 'sliding') {

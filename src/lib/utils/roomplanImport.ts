@@ -110,7 +110,9 @@ function mapDoorType(cat: any): Door['type'] {
     if (inner?.isOpen) return 'single';
     return 'single';
   }
-  if (key === 'doubleDoor' || key === 'french') return 'double';
+  // A scanned 'french' door keeps its glazing here too
+  if (key === 'french') return 'french';
+  if (key === 'doubleDoor') return 'double';
   if (key === 'slidingDoor') return 'sliding';
   if (key === 'foldingDoor') return 'bifold';
   return 'single';
