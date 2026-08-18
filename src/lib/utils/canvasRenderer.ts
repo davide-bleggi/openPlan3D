@@ -505,6 +505,34 @@ export function drawDoorOnWall(cs: CanvasState, wall: Wall, door: Door): void {
   }
 
   const doorType = door.type || 'single';
+  // Glazed leaves (French door, porta finestra) are drawn as a pair of rails
+  // with the glass between them, the way a solid leaf's single heavy line
+  // reads as a panel.
+  const glazed = doorType === 'french' || doorType === 'french-window';
+
+  /** One door leaf, from its hinge to its swung-open tip. */
+  const drawLeaf = (hx: number, hy: number, ex: number, ey: number) => {
+    if (!glazed) {
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#444';
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      return;
+    }
+    const lx = ex - hx, ly = ey - hy;
+    const len = Math.hypot(lx, ly) || 1;
+    const px = -ly / len, py = lx / len;
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = '#444';
+    for (const off of [-1.6, 1.6]) {
+      ctx.beginPath();
+      ctx.moveTo(hx + px * off, hy + py * off);
+      ctx.lineTo(ex + px * off, ey + py * off);
+      ctx.stroke();
+    }
+  };
 
   if (doorType === 'single' || doorType === 'pocket') {
     const r = door.width * zoom;
@@ -530,20 +558,15 @@ export function drawDoorOnWall(cs: CanvasState, wall: Wall, door: Door): void {
       ctx.stroke();
     }
 
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = '#444';
-    ctx.beginPath();
-    ctx.moveTo(hingeX, hingeY);
     const panelAngle = doorType === 'pocket' ? startAngle : endAngle;
-    ctx.lineTo(hingeX + r * Math.cos(panelAngle), hingeY + r * Math.sin(panelAngle));
-    ctx.stroke();
+    drawLeaf(hingeX, hingeY, hingeX + r * Math.cos(panelAngle), hingeY + r * Math.sin(panelAngle));
 
     ctx.fillStyle = '#444';
     ctx.beginPath();
     ctx.arc(hingeX, hingeY, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
-  } else if (doorType === 'double' || doorType === 'french') {
+  } else if (doorType === 'double' || doorType === 'french' || doorType === 'french-window') {
     const r = halfDoor;
     for (const side of [-1, 1] as const) {
       const hx = s.x + ux * halfDoor * side;
@@ -558,21 +581,12 @@ export function drawDoorOnWall(cs: CanvasState, wall: Wall, door: Door): void {
       ctx.arc(hx, hy, r, Math.min(sa, ea), Math.max(sa, ea));
       ctx.stroke();
 
-      ctx.lineWidth = 2.5;
-      ctx.strokeStyle = '#444';
-      ctx.beginPath();
-      ctx.moveTo(hx, hy);
-      ctx.lineTo(hx + r * Math.cos(ea), hy + r * Math.sin(ea));
-      ctx.stroke();
+      drawLeaf(hx, hy, hx + r * Math.cos(ea), hy + r * Math.sin(ea));
 
       ctx.fillStyle = '#444';
       ctx.beginPath();
       ctx.arc(hx, hy, 2, 0, Math.PI * 2);
       ctx.fill();
-    }
-    if (doorType === 'french') {
-      ctx.strokeStyle = '#aaa';
-      ctx.lineWidth = 0.5;
     }
 
   } else if (doorType === 'sliding') {

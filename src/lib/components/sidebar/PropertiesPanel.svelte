@@ -587,6 +587,7 @@
           <option value="double">Double</option>
           <option value="sliding">Sliding</option>
           <option value="french">French</option>
+          <option value="french-window">French Window (porta finestra)</option>
           <option value="pocket">Pocket</option>
           <option value="bifold">Bifold</option>
           <option value="opening">Doorway (no door)</option>

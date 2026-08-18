@@ -1733,7 +1733,13 @@
       const angle = Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x);
       const wt = Math.max(wall.thickness, WALL_THICKNESS);
 
-      const frameMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.6 });
+      // A porta finestra is trimmed like a window — painted frame, not stained
+      // joinery — so its jambs and header take the lighter colour.
+      const isGlazedDoor = door.type === 'french-window';
+      const frameMat = new THREE.MeshStandardMaterial({
+        color: isGlazedDoor ? 0xe8e4dc : 0x6b4423,
+        roughness: isGlazedDoor ? 0.4 : 0.6,
+      });
       const doorHeight = doorOpeningHeight(door, wall.height);
       const jamb = DOOR_JAMB;
       const eps = OPENING_TRIM_EPS;
@@ -1784,6 +1790,64 @@
 
       if (door.type === 'opening') {
         // Plain doorway — jambs and header only, no door leaf
+      } else if (door.type === 'french-window') {
+        // Porta finestra — a pair of glazed leaves standing on the floor, ajar
+        // by the same 15° as a swing door. Each leaf is built in its own group
+        // with the hinge at local x = 0 and the meeting stile at x = leafW, so
+        // placing it is a matter of putting the group on the hinge and turning
+        // it to the leaf's open direction.
+        const sashMat = new THREE.MeshStandardMaterial({ color: 0xe8e4dc, roughness: 0.4, metalness: 0.1 });
+        const glassMat = new THREE.MeshStandardMaterial({
+          color: 0xa8d8ea, transparent: true, opacity: 0.3,
+          roughness: 0.05, metalness: 0.1, side: THREE.DoubleSide
+        });
+        const handleMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
+        const leafH = Math.max(doorHeight - 4, 0.1);
+        const leafW = Math.max((door.width - 4) / 2, 0.1);
+        const sash = Math.min(6, leafW / 3);   // stile/rail width
+        const leafT = 4;                        // leaf thickness
+        const swingAngle = 0.26;                // ~15 degrees ajar
+        const normalX = -Math.sin(angle);
+        const normalZ = Math.cos(angle);
+        for (const side of [-1, 1] as const) {
+          const leaf = new THREE.Group();
+          const bars: { w: number; h: number; ox: number; oy: number }[] = [
+            { w: leafW, h: sash, ox: leafW / 2, oy: sash / 2 },            // bottom rail
+            { w: leafW, h: sash, ox: leafW / 2, oy: leafH - sash / 2 },    // top rail
+            { w: sash, h: leafH - sash * 2, ox: sash / 2, oy: leafH / 2 }, // hinge stile
+            { w: sash, h: leafH - sash * 2, ox: leafW - sash / 2, oy: leafH / 2 }, // meeting stile
+          ];
+          for (const bar of bars) {
+            if (bar.w <= 0 || bar.h <= 0) continue;
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(bar.w, bar.h, leafT), sashMat);
+            mesh.position.set(bar.ox, bar.oy, 0);
+            mesh.castShadow = true;
+            leaf.add(mesh);
+          }
+          const paneW = leafW - sash * 2;
+          const paneH = leafH - sash * 2;
+          if (paneW > 0 && paneH > 0) {
+            const pane = new THREE.Mesh(new THREE.PlaneGeometry(paneW, paneH), glassMat);
+            pane.position.set(leafW / 2, leafH / 2, 0);
+            leaf.add(pane);
+          }
+          // Lever handle on the meeting stile, at the usual height unless the
+          // leaf is too short for it
+          const handle = new THREE.Mesh(new THREE.SphereGeometry(3, 8, 8), handleMat);
+          handle.position.set(Math.max(leafW - sash - 3, 0), Math.min(105, leafH / 2), leafT / 2 + 1);
+          leaf.add(handle);
+
+          // The left leaf runs along the wall from its jamb, the right one back
+          // the other way, and both swing open to the same side.
+          const hingeOffset = side * halfDW;
+          leaf.position.set(
+            px + hingeOffset * Math.cos(angle) + normalX * 2,
+            0,
+            py + hingeOffset * Math.sin(angle) + normalZ * 2
+          );
+          leaf.rotation.y = side === -1 ? -angle + swingAngle : -angle - Math.PI - swingAngle;
+          wallGroup.add(leaf);
+        }
       } else if (door.type === 'garage') {
         // Sectional overhead door: stacked horizontal panels filling the opening
         const secMat = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.7 });

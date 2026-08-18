@@ -54,7 +54,14 @@ export interface Door {
   position: number; // 0-1 along wall
   width: number;
   height: number;
-  type: 'single' | 'double' | 'sliding' | 'french' | 'pocket' | 'bifold' | 'opening' | 'garage';
+  /**
+   * Leaf style. 'french-window' is a porta finestra: a full-height glazed door
+   * onto a balcony or terrace. It is a door, not a window — it stands on the
+   * floor with no sill and carves its opening like any other door — but it is
+   * framed and glazed like one, so it is drawn with glass rather than a solid
+   * leaf.
+   */
+  type: 'single' | 'double' | 'sliding' | 'french' | 'french-window' | 'pocket' | 'bifold' | 'opening' | 'garage';
   swingDirection: 'left' | 'right';
   flipSide: boolean; // flip which side of wall the door opens to (vertical flip)
 }
