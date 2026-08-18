@@ -338,7 +338,7 @@ export function exportAsSVG(project: Project) {
     }
 
     const doorType = d.type || 'single';
-    // The porta finestra's glazed leaves read as a pair of rails with the glass
+    // A French door's glazed leaves read as a pair of rails with the glass
     // between them; a solid leaf stays one heavy line.
     const glazed = doorType === 'french';
     const svgLeaf = (hx: number, hy: number, ex: number, ey: number) => {

@@ -110,7 +110,7 @@ function mapDoorType(cat: any): Door['type'] {
     if (inner?.isOpen) return 'single';
     return 'single';
   }
-  // A scanned 'french' door is our porta finestra, glazing and all
+  // A scanned 'french' door keeps its glazing here too
   if (key === 'french') return 'french';
   if (key === 'doubleDoor') return 'double';
   if (key === 'slidingDoor') return 'sliding';

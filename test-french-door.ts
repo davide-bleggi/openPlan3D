@@ -1,12 +1,12 @@
 /**
- * Test script: the porta finestra ('french' door) is carved like a door, not
- * like a window (issue #17).
+ * Test script: a French door is carved like a door, not like a window
+ * (issue #17).
  *
- * A porta finestra is a full-height glazed door onto a balcony or terrace. It
- * is glazed like a window, but it stands on the floor: its opening must run
- * from the floor to its head, with no apron of wall left underneath.
+ * A French door is a full-height glazed door onto a balcony or terrace. It is
+ * glazed like a window, but it stands on the floor: its opening must run from
+ * the floor to its head, with no apron of wall left underneath.
  *
- * Run with: npx tsx test-porta-finestra.ts
+ * Run with: npx tsx test-french-door.ts
  */
 import {
   buildWallSegments,
@@ -30,7 +30,7 @@ function check(label: string, condition: boolean, detail = '') {
   }
 }
 
-function portaFinestra(position: number, width = 150, height = 230): Door {
+function frenchDoor(position: number, width = 150, height = 230): Door {
   return {
     id: `pf-${position}`, wallId: 'w1', position, width, height,
     type: 'french', swingDirection: 'left', flipSide: false,
@@ -60,7 +60,7 @@ function anySegmentIn(segs: WallSegment[], x0: number, x1: number, y0: number, y
 
 console.log('\n1. The opening reaches the floor');
 {
-  const d = portaFinestra(0.5);
+  const d = frenchDoor(0.5);
   const segs = buildWallSegments(WALL_LEN, WALL_H, [d], []);
   const left = d.position * WALL_LEN - d.width / 2;
   const right = d.position * WALL_LEN + d.width / 2;
@@ -74,21 +74,21 @@ console.log('\n1. The opening reaches the floor');
 
 console.log('\n2. Unlike a window of the same size, which keeps its apron');
 {
-  const d = portaFinestra(0.5);
+  const d = frenchDoor(0.5);
   const win = window(0.5, d.width, 50, d.height - 50);
   const doorSegs = buildWallSegments(WALL_LEN, WALL_H, [d], []);
   const winSegs = buildWallSegments(WALL_LEN, WALL_H, [], [win]);
   const left = d.position * WALL_LEN - d.width / 2;
   const right = d.position * WALL_LEN + d.width / 2;
   check('the window leaves an apron below the sill', anySegmentIn(winSegs, left, right, 0, 50));
-  check('the porta finestra does not', !anySegmentIn(doorSegs, left, right, 0, 50));
-  check('so the porta finestra carves more wall away', coveredArea(doorSegs) < coveredArea(winSegs));
+  check('the French door does not', !anySegmentIn(doorSegs, left, right, 0, 50));
+  check('so the French door carves more wall away', coveredArea(doorSegs) < coveredArea(winSegs));
 }
 
 console.log('\n3. Head height');
 {
-  check('uses the door\'s own height', doorOpeningHeight(portaFinestra(0.5, 150, 230), WALL_H) === 230);
-  check('clamps to a lower wall', doorOpeningHeight(portaFinestra(0.5, 150, 230), 220) === 220);
+  check('uses the door\'s own height', doorOpeningHeight(frenchDoor(0.5, 150, 230), WALL_H) === 230);
+  check('clamps to a lower wall', doorOpeningHeight(frenchDoor(0.5, 150, 230), 220) === 220);
 }
 
 console.log(allPassed ? '\nAll checks passed.\n' : '\nSome checks FAILED.\n');

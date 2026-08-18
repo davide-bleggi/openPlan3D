@@ -505,8 +505,8 @@ export function drawDoorOnWall(cs: CanvasState, wall: Wall, door: Door): void {
   }
 
   const doorType = door.type || 'single';
-  // The porta finestra's glazed leaves are drawn as a pair of rails with the
-  // glass between them, where a solid leaf is one heavy line.
+  // A French door's glazed leaves are drawn as a pair of rails with the glass
+  // between them, where a solid leaf is one heavy line.
   const glazed = doorType === 'french';
 
   /** One door leaf, from its hinge to its swung-open tip. */

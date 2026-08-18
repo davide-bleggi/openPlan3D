@@ -245,7 +245,7 @@ export function addDoor(wallId: string, position: number, doorType: Door['type']
     single: { width: 90, height: 210 },
     double: { width: 150, height: 210 },
     sliding: { width: 180, height: 210 },
-    // Porta finestra: reaches the floor like a door and runs taller than one,
+    // A French door reaches the floor like any door and runs taller than one,
     // since the glazing carries on up to just under the lintel.
     french: { width: 150, height: 230 },
     pocket: { width: 90, height: 210 },

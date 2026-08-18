@@ -161,7 +161,7 @@
   interface OpeningRect {
     id: string;
     kind: 'door' | 'window';
-    /** true for a glazed door leaf (porta finestra), drawn with glass */
+    /** true for a glazed door leaf (French door), drawn with glass */
     glazed?: boolean;
     /** left edge along wall, cm */ x: number;
     /** bottom above floor, cm */ y: number;
@@ -392,7 +392,7 @@
       const pw = r.w * scale;
       const ph = r.h * scale;
       if (r.kind === 'door') {
-        // A porta finestra is glazed: it keeps the door outline but shows glass
+        // A French door is glazed: it keeps the door outline but shows glass
         // and a meeting stile instead of a solid leaf.
         ctx.fillStyle = r.glazed ? '#e0f2fe' : '#fef3c7';
         ctx.fillRect(px, py, pw, ph);

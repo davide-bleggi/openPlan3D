@@ -1733,7 +1733,7 @@
       const angle = Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x);
       const wt = Math.max(wall.thickness, WALL_THICKNESS);
 
-      // A porta finestra is trimmed like a window — painted frame, not stained
+      // A French door is trimmed like a window — painted frame, not stained
       // joinery — so its jambs and header take the lighter colour.
       const isGlazedDoor = door.type === 'french';
       const frameMat = new THREE.MeshStandardMaterial({
@@ -1791,7 +1791,7 @@
       if (door.type === 'opening') {
         // Plain doorway — jambs and header only, no door leaf
       } else if (door.type === 'french') {
-        // Porta finestra — a pair of glazed leaves standing on the floor, ajar
+        // French door — a pair of glazed leaves standing on the floor, ajar
         // by the same 15° as a swing door. Each leaf is built in its own group
         // with the hinge at local x = 0 and the meeting stile at x = leafW, so
         // placing it is a matter of putting the group on the hinge and turning
