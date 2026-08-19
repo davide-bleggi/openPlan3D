@@ -280,6 +280,9 @@
                   '',
                   '── ELEMENTS ──',
                   'R          Rotate element',
+                  '←↑→↓       Nudge selection 1cm',
+                  '⇧+arrow    Nudge selection 10cm',
+                  'Alt+arrow  Nudge selection 1mm',
                   'Del/Back   Delete selected',
                   'Ctrl+L     Lock/Unlock',
                   'Ctrl+G     Group selection',
@@ -359,6 +362,9 @@
               </div>
               <div class="space-y-1.5 mb-5">
                 <div class="flex justify-between"><span class="text-gray-600">Rotate element</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">R</kbd></div>
+                <div class="flex justify-between"><span class="text-gray-600">Nudge selection (1&nbsp;cm)</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">← ↑ → ↓</kbd></div>
+                <div class="flex justify-between"><span class="text-gray-600">Nudge selection (10&nbsp;cm)</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">⇧+arrow</kbd></div>
+                <div class="flex justify-between"><span class="text-gray-600">Nudge selection (1&nbsp;mm)</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">Alt+arrow</kbd></div>
                 <div class="flex justify-between"><span class="text-gray-600">Delete selected</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">Del</kbd></div>
                 <div class="flex justify-between"><span class="text-gray-600">Lock / Unlock</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">Ctrl+L</kbd></div>
                 <div class="flex justify-between"><span class="text-gray-600">Group selection</span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono text-slate-700 border border-gray-200">Ctrl+G</kbd></div>

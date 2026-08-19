@@ -3,6 +3,7 @@ import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, S
 import { floorNameForLevel } from '$lib/utils/floorStacking';
 import { assignFloorLevels, groundSlotIndex, moveFloorInStack, normalizeFloorOrder, orderFloorsBottomUp, reorderFloorStack } from '$lib/utils/floorOrder';
 import { cloneFloorContents } from '$lib/utils/floorClone';
+import { applyNudge, computeNudge } from '$lib/utils/nudge';
 
 
 function uid(): string {
@@ -549,6 +550,35 @@ export function removeElement(id: string) {
     if (f.textAnnotations) f.textAnnotations = f.textAnnotations.filter((t) => t.id !== id);
     if (f.entourage) f.entourage = f.entourage.filter((e) => e.id !== id);
   }, 'Deleted element');
+}
+
+/**
+ * Move every selected element by (dx, dy) world centimetres — what the arrow
+ * keys do (issue #21).
+ *
+ * The move is planned against the current floor first, so a nudge that can't
+ * shift anything (everything selected is locked, or a door was pushed square
+ * across its own wall) leaves the document and the undo stack alone. What does
+ * move lands in one entry: successive presses share a coalesce key, so holding
+ * an arrow down collapses into a single undo step instead of one per repeat,
+ * the same way a drag does.
+ *
+ * Returns how many elements moved.
+ */
+export function nudgeElements(ids: Iterable<string>, dx: number, dy: number): number {
+  const p = get(currentProject);
+  if (!p) return 0;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  if (!floor) return 0;
+  const idSet = new Set(ids);
+  const moves = computeNudge(floor, idSet, dx, dy);
+  if (moves.count === 0) return 0;
+  mutate(
+    (f) => applyNudge(f, moves),
+    moves.count === 1 ? 'Nudged element' : 'Nudged selection',
+    coalesceKeyFor('nudge', [...idSet].sort().join('+'), { dx, dy }),
+  );
+  return moves.count;
 }
 
 /** Move a wall endpoint without creating an undo snapshot (for dragging) */

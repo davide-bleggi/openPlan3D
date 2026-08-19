@@ -1,7 +1,17 @@
-import { selectedTool, undo, redo, viewMode, selectedElementId, selectedElementIds, removeElement, panMode, beginUndoGroup, endUndoGroup, setActiveTool } from '$lib/stores/project';
+import { selectedTool, undo, redo, viewMode, selectedElementId, selectedElementIds, removeElement, panMode, beginUndoGroup, endUndoGroup, setActiveTool, nudgeElements } from '$lib/stores/project';
+import { nudgeDelta, nudgeDirection, nudgeStep } from '$lib/utils/nudge';
 import { get } from 'svelte/store';
 import { localStore } from '$lib/services/datastore';
 import { currentProject } from '$lib/stores/project';
+
+/** The selection the single-key shortcuts act on: the multi-select when it is
+ *  non-empty, otherwise the single selection, or null when nothing is picked. */
+function selectedIds(): Set<string> | null {
+  const multi = get(selectedElementIds);
+  if (multi.size > 0) return multi;
+  const single = get(selectedElementId);
+  return single ? new Set([single]) : null;
+}
 
 export interface ShortcutContext {
   rotateFurniture?: () => void;
@@ -37,6 +47,18 @@ export function handleGlobalShortcut(e: KeyboardEvent, ctx: ShortcutContext = {}
   // Don't handle single-key shortcuts if user is typing in an input
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return false;
+
+  // Arrow keys nudge the selection along the plan axes (issue #21). Held down
+  // they auto-repeat, which is the point: a run of presses is one undo entry.
+  const dir = nudgeDirection(e);
+  if (dir) {
+    const ids = selectedIds();
+    if (!ids) return false;   // nothing selected — let the page scroll
+    e.preventDefault();
+    const d = nudgeDelta(dir, nudgeStep(e));
+    nudgeElements(ids, d.x, d.y);
+    return true;
+  }
 
   if (e.key === 'Escape') {
     setActiveTool('select');
