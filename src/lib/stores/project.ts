@@ -4,6 +4,7 @@ import { floorNameForLevel } from '$lib/utils/floorStacking';
 import { assignFloorLevels, groundSlotIndex, moveFloorInStack, normalizeFloorOrder, orderFloorsBottomUp, reorderFloorStack } from '$lib/utils/floorOrder';
 import { cloneFloorContents } from '$lib/utils/floorClone';
 import { applyNudge, computeNudge } from '$lib/utils/nudge';
+import { applyPaste, copySelection, pasteOffset, planPaste, type Clipboard } from '$lib/utils/clipboard';
 
 
 function uid(): string {
@@ -997,6 +998,69 @@ export function duplicateWall(id: string): string | null {
     f.walls.push({ ...w, id: newId, start: { x: w.start.x + 30, y: w.start.y + 30 }, end: { x: w.end.x + 30, y: w.end.y + 30 } });
   });
   return newId;
+}
+
+// --- Clipboard (copy / paste, issue #22) ---
+
+/**
+ * The copied elements, held until they are replaced. Exposed as a store so the
+ * UI can tell whether there is anything to paste — the context menu offers
+ * Paste only when there is.
+ *
+ * It is the editor's own clipboard, not the system one: a floor plan selection
+ * has no useful text or image form, and reading the system clipboard needs a
+ * permission prompt that would sit in front of every paste.
+ */
+export const clipboardStore = writable<Clipboard | null>(null);
+
+/** Which floor the clipboard was last pasted onto, and how many times, so a run
+ *  of pastes cascades instead of piling up in one spot. Switching floors starts
+ *  the count again — the first paste onto a new floor lands in place. */
+let pasteTargetFloorId: string | null = null;
+let pasteRepeat = 0;
+
+/** Copy the given elements onto the clipboard. Returns how many were copied. */
+export function copySelectionToClipboard(ids: Iterable<string>): number {
+  const p = get(currentProject);
+  if (!p) return 0;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  if (!floor) return 0;
+  const clip = copySelection(floor, ids);
+  if (!clip) return 0;
+  clipboardStore.set(clip);
+  pasteTargetFloorId = null;
+  pasteRepeat = 0;
+  return clip.entries.length;
+}
+
+/**
+ * Paste the clipboard onto the active floor — the same floor it was copied
+ * from or any other one — and select what lands. Returns the new ids.
+ *
+ * The paste is planned first, so a clipboard with nothing that can land here
+ * (a lone door, and no wall on this floor to cut it into) leaves the document
+ * and the undo stack alone.
+ */
+export function pasteClipboard(): string[] {
+  const p = get(currentProject);
+  if (!p) return [];
+  const clip = get(clipboardStore);
+  if (!clip || clip.entries.length === 0) return [];
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  if (!floor) return [];
+
+  if (pasteTargetFloorId !== floor.id) {
+    pasteTargetFloorId = floor.id;
+    pasteRepeat = 0;
+  }
+  const plan = planPaste(floor, clip, { offset: pasteOffset(clip, floor.id, pasteRepeat), newId: uid });
+  if (plan.ids.length === 0) return [];
+  pasteRepeat++;
+
+  mutate((f) => applyPaste(f, plan), plan.ids.length === 1 ? 'Pasted element' : `Pasted ${plan.ids.length} elements`);
+  selectedElementIds.set(plan.ids.length > 1 ? new Set(plan.ids) : new Set());
+  selectedElementId.set(plan.ids[0]);
+  return plan.ids;
 }
 
 // --- Guide Lines ---
