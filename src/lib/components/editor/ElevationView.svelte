@@ -16,6 +16,7 @@
   import { projectSettings, formatLength } from '$lib/stores/settings';
   import type { Door, Window as Win } from '$lib/models/types';
   import { doorOpeningHeight } from '$lib/utils/wallOpenings';
+  import { nudgeDirection, nudgeStep, type NudgeDirection } from '$lib/utils/nudge';
 
   const DEFAULT_WALL_HEIGHT = 240; // cm — fallback when a wall has no height
   const DEFAULT_SILL = 90;         // cm
@@ -125,8 +126,12 @@
     elevationWallId.set(null);
   }
 
-  // Escape returns to the plan view. Registered in the capture phase so the
-  // plan canvas's own window-level Escape handling doesn't also fire.
+  // Escape returns to the plan view, and the arrow keys nudge the selected
+  // opening the way this view shows it — along the wall, or up and down the
+  // wall face for a window's sill (issue #21). Both are registered in the
+  // capture phase so the plan canvas's own window-level handling, which thinks
+  // in plan axes and would send the opening somewhere else entirely, doesn't
+  // also fire.
   $effect(() => {
     if (!$elevationWallId) return;
     const onKey = (e: KeyboardEvent) => {
@@ -134,11 +139,45 @@
         e.preventDefault();
         e.stopImmediatePropagation();
         backToPlan();
+        return;
       }
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const dir = nudgeDirection(e);
+      if (!dir) return;
+      // Swallowed even with nothing selected: the plan canvas is still mounted
+      // behind this view and would otherwise move the wall along axes the user
+      // can't see from here.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (selectedOpeningId) nudgeOpening(selectedOpeningId, dir, nudgeStep(e));
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   });
+
+  /** Move the selected opening by `step` cm: left/right slides it along the
+   *  wall, up/down raises or lowers a window's sill (a door stands on the
+   *  floor, so it has nothing to raise). */
+  function nudgeOpening(id: string, dir: NudgeDirection, step: number) {
+    const door = doors.find((d) => d.id === id);
+    const win = windows.find((w) => w.id === id);
+    if (dir === 'left' || dir === 'right') {
+      const along = (dir === 'right' ? step : -step) / Math.max(1, wallLen);
+      const width = (door?.width ?? win?.width) ?? 0;
+      const pos = (door?.position ?? win?.position) ?? 0.5;
+      const next = clampPosition(pos + along, width);
+      if (Math.abs(next - pos) < 1e-6) return;
+      if (door) updateDoor(id, { position: next });
+      else if (win) updateWindow(id, { position: next });
+      return;
+    }
+    if (!win) return;
+    const maxSill = Math.max(0, wallH - win.height);
+    const sill = win.sillHeight ?? DEFAULT_SILL;
+    const next = Math.round((Math.max(0, Math.min(maxSill, sill + (dir === 'up' ? step : -step)))) * 10) / 10;
+    if (next !== sill) updateWindow(id, { sillHeight: next });
+  }
 
   // ── Canvas + geometry ─────────────────────────────────────────────
   let canvas = $state<HTMLCanvasElement | null>(null);

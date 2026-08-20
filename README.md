@@ -116,6 +116,7 @@ npm run preview
 | `H` | Pan (hand) mode |
 | `I` | Hide / show the selected wall(s) |
 | `R` | Rotate selected furniture |
+| `←` `↑` `→` `↓` | Nudge the selection 1 cm (10 cm with `Shift`, 1 mm with `Alt`) |
 | `Tab` | Toggle 2D / 3D view |
 | `Delete` / `Backspace` | Delete selected element(s) |
 | `Escape` | Deselect / cancel |
