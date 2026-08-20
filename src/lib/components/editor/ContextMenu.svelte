@@ -8,6 +8,7 @@
     beginUndoGroup, endUndoGroup, updateFurniture
   } from '$lib/stores/project';
   import type { Wall, Door, Window as Win, FurnitureItem, Room } from '$lib/models/types';
+  import type { Clipboard } from '$lib/utils/clipboard';
 
   interface Props {
     x: number;
@@ -19,7 +20,7 @@
     targetFurniture?: FurnitureItem | null;
     targetRoom?: Room | null;
     selectedWalls?: Wall[];
-    clipboard?: any;
+    clipboard?: Clipboard | null;
     onclose: () => void;
     onaction: (action: string, data?: any) => void;
   }
@@ -31,6 +32,12 @@
   // Adjust position to keep menu within viewport
   let adjustedX = $state(0);
   let adjustedY = $state(0);
+
+  let clipboardCount = $derived(clipboard?.entries.length ?? 0);
+  /** A right-click on empty canvas still offers Copy while something is
+   *  selected — the selection is what a copy acts on, not the click target. */
+  let hasSelection = $derived($selectedElementIds.size > 0 || !!$selectedElementId);
+  let pasteLabel = $derived(clipboardCount > 1 ? `Paste ${clipboardCount} Elements` : 'Paste');
 
   let selectedWallCount = $derived(selectedWalls?.length ?? 0);
   let hiddenWallCount = $derived(selectedWalls?.filter(w => w.hidden).length ?? 0);
@@ -73,6 +80,17 @@
   });
 </script>
 
+{#snippet copyPaste()}
+  <button class="ctx-item" role="menuitem" onclick={() => clickItem('copy')}>
+    <span class="ctx-icon">📄</span> Copy <span class="ctx-hint">Ctrl+C</span>
+  </button>
+  {#if clipboardCount > 0}
+    <button class="ctx-item" role="menuitem" onclick={() => clickItem('paste')}>
+      <span class="ctx-icon">📋</span> {pasteLabel} <span class="ctx-hint">Ctrl+V</span>
+    </button>
+  {/if}
+{/snippet}
+
 {#if visible}
   <div
     bind:this={menuEl}
@@ -81,8 +99,10 @@
     role="menu"
   >
     {#if targetType === 'furniture'}
+      {@render copyPaste()}
+      <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('duplicate-furniture')}>
-        <span class="ctx-icon">📋</span> Duplicate
+        <span class="ctx-icon">⧉</span> Duplicate
       </button>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('rotate-furniture-90')}>
         <span class="ctx-icon">🔄</span> Rotate 90°
@@ -111,6 +131,8 @@
       </button>
 
     {:else if targetType === 'wall'}
+      {@render copyPaste()}
+      <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('split-wall')}>
         <span class="ctx-icon">✂️</span> Split Wall
       </button>
@@ -138,6 +160,8 @@
       </button>
 
     {:else if targetType === 'door' || targetType === 'window'}
+      {@render copyPaste()}
+      <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('properties')}>
         <span class="ctx-icon">⚙️</span> Properties
       </button>
@@ -159,10 +183,17 @@
       </button>
 
     {:else if targetType === 'canvas'}
-      {#if clipboard}
-        <button class="ctx-item" role="menuitem" onclick={() => clickItem('paste')}>
-          <span class="ctx-icon">📋</span> Paste
+      {#if hasSelection}
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('copy')}>
+          <span class="ctx-icon">📄</span> Copy Selection <span class="ctx-hint">Ctrl+C</span>
         </button>
+      {/if}
+      {#if clipboardCount > 0}
+        <button class="ctx-item" role="menuitem" onclick={() => clickItem('paste')}>
+          <span class="ctx-icon">📋</span> {pasteLabel} <span class="ctx-hint">Ctrl+V</span>
+        </button>
+      {/if}
+      {#if hasSelection || clipboardCount > 0}
         <div class="ctx-sep"></div>
       {/if}
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('select-all')}>
@@ -222,6 +253,12 @@
   }
   :global(html.dark) .ctx-danger:hover {
     background: #451a1a;
+  }
+  .ctx-hint {
+    margin-left: auto;
+    padding-left: 16px;
+    font-size: 11px;
+    color: #9ca3af;
   }
   .ctx-icon {
     width: 18px;

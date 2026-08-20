@@ -45,6 +45,7 @@ Design floor plans in an intuitive 2D editor, then instantly preview them in a f
 - **Layers** — Organize elements across multiple layers with visibility toggles
 - **Annotations** — Text labels with customizable font size and color
 - **Room presets** — Quickly apply standard room dimensions
+- **Copy & paste** — `Ctrl/Cmd+C` and `Ctrl/Cmd+V`, or the right-click menu. The copy is independent of the original and can be pasted onto any floor: onto the one it came from it steps aside, onto another it lands in the same place, so a balcony or a room's furniture can be carried up the building. Multi-selections keep their relative positions, and doors and windows find the wall they belong on
 - **Multi-floor** — The floor dropdown is also the floor manager: switch floors, drag rows to restack the building, rename, duplicate or remove. Adding a floor starts it blank or as an independent copy of any existing floor
 - **Undo/Redo** — Full history with grouped operations
 - **Version history** — Auto-saved snapshots you can restore
@@ -122,6 +123,8 @@ npm run preview
 | `Escape` | Deselect / cancel |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z` / `Ctrl+Y` | Redo |
+| `Ctrl+C` | Copy the selection |
+| `Ctrl+V` | Paste onto the floor you are on |
 | `Ctrl+S` | Save project |
 
 ---

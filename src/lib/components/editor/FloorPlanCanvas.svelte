@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, cancelUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden, showGrid, showRulers, showMinimap, layerPanelOpen, fitViewRequest } from '$lib/stores/project';
+  import { get } from 'svelte/store';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, cancelUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject, elevationWallId, elevationPickMode, toggleWallHidden, setWallsHidden, showGrid, showRulers, showMinimap, layerPanelOpen, fitViewRequest, clipboardStore, copySelectionToClipboard, pasteClipboard } from '$lib/stores/project';
   import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation, CustomEntourageDef } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
@@ -310,9 +311,6 @@
   function isNativeTouch(e: PointerEvent): boolean {
     return e.isTrusted && e.pointerType === 'touch';
   }
-
-  // Clipboard for copy/paste (Ctrl+C / Ctrl+V)
-  let clipboard: { items: Array<{ type: 'furniture' | 'door' | 'window'; data: any }> } | null = $state(null);
 
   // Context menu state
   let ctxMenuVisible = $state(false);
@@ -1954,10 +1952,11 @@
       }
     });
 
-    // Clipboard image paste handler — only if no internal furniture clipboard
+    // Image off the system clipboard becomes the tracing background — but only
+    // when the editor's own clipboard is empty, since Ctrl+V means paste-elements then.
     function handlePaste(e: ClipboardEvent) {
       if (!e.clipboardData) return;
-      if (clipboard && clipboard.items.length > 0) return; // internal clipboard takes priority
+      if (get(clipboardStore)) return; // the editor's own clipboard takes priority
       const files = e.clipboardData.files;
       for (let i = 0; i < files.length; i++) {
         if (files[i].type.startsWith('image/')) {
@@ -3436,71 +3435,6 @@
       return;
     }
 
-    // Copy (Ctrl+C / Cmd+C)
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.shiftKey) {
-      if (currentFloor) {
-        const items: Array<{ type: 'furniture' | 'door' | 'window'; data: any }> = [];
-        const idsToCheck = currentSelectedIds.size > 0 ? currentSelectedIds : (currentSelectedId ? new Set([currentSelectedId]) : new Set<string>());
-        for (const id of idsToCheck) {
-          const fi = currentFloor.furniture.find(f => f.id === id);
-          if (fi) { items.push({ type: 'furniture', data: { ...fi } }); continue; }
-          const door = currentFloor.doors.find(d => d.id === id);
-          if (door) { items.push({ type: 'door', data: { ...door } }); continue; }
-          const win = currentFloor.windows.find(w => w.id === id);
-          if (win) { items.push({ type: 'window', data: { ...win } }); continue; }
-        }
-        if (items.length > 0) {
-          clipboard = { items };
-          e.preventDefault();
-          return;
-        }
-      }
-    }
-
-    // Paste (Ctrl+V / Cmd+V)
-    if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !e.shiftKey) {
-      if (clipboard && clipboard.items.length > 0 && currentFloor) {
-        e.preventDefault();
-        beginUndoGroup();
-        const newIds: string[] = [];
-        // We need to duplicate each clipboard item by its stored ID
-        // For successive pastes, update clipboard to point to the new IDs
-        const newItems: Array<{ type: 'furniture' | 'door' | 'window'; data: any }> = [];
-        for (const item of clipboard.items) {
-          let newId: string | null = null;
-          if (item.type === 'furniture') {
-            newId = duplicateFurniture(item.data.id);
-          } else if (item.type === 'door') {
-            newId = duplicateDoor(item.data.id);
-          } else if (item.type === 'window') {
-            newId = duplicateWindow(item.data.id);
-          }
-          if (newId) {
-            newIds.push(newId);
-            // Update clipboard to reference the newly created element for successive pastes
-            const newData = item.type === 'furniture'
-              ? currentFloor.furniture.find(f => f.id === newId)
-              : item.type === 'door'
-              ? currentFloor.doors.find(d => d.id === newId)
-              : currentFloor.windows.find(w => w.id === newId);
-            newItems.push({ type: item.type, data: newData ? { ...newData } : { ...item.data, id: newId } });
-          }
-        }
-        // Update clipboard for successive pastes
-        if (newItems.length > 0) clipboard = { items: newItems };
-        endUndoGroup();
-        if (newIds.length === 1) {
-          selectedElementId.set(newIds[0]);
-          selectedElementIds.set(new Set());
-        } else if (newIds.length > 1) {
-          selectedElementIds.set(new Set(newIds));
-          selectedElementId.set(newIds[0]);
-        }
-        return;
-      }
-
-    }
-
     // Global shortcuts
     const handled = handleGlobalShortcut(e, {
       rotateFurniture: () => {
@@ -3751,6 +3685,16 @@
   /** True when at least one selected wall is still rendered */
   let selectedWallsAnyVisible = $derived(selectedWalls.some(w => !w.hidden));
 
+  /** What a Copy from the context menu takes: the whole selection when the
+   *  element clicked is part of it, otherwise just that element — the same way
+   *  a right-click behaves in a file manager. */
+  function contextClipboardIds(): string[] {
+    const id = ctxMenuTargetId;
+    if (id && !currentSelectedIds.has(id)) return [id];
+    if (currentSelectedIds.size > 0) return [...currentSelectedIds];
+    return id ? [id] : (currentSelectedId ? [currentSelectedId] : []);
+  }
+
   function handleContextMenuAction(action: string, _data?: any) {
     if (!currentFloor) return;
     const id = ctxMenuTargetId;
@@ -3842,10 +3786,14 @@
         }
         break;
 
+      // Clipboard actions (issue #22)
+      case 'copy':
+        copySelectionToClipboard(contextClipboardIds());
+        break;
+
       // Canvas actions
       case 'paste':
-        // Trigger paste via synthetic keyboard event
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, metaKey: true }));
+        pasteClipboard();
         break;
       case 'select-all':
         if (currentFloor) {
@@ -4290,7 +4238,7 @@
     targetFurniture={ctxMenuFurniture}
     targetRoom={ctxMenuRoom}
     selectedWalls={selectedWalls}
-    clipboard={clipboard}
+    clipboard={$clipboardStore}
     onclose={() => { ctxMenuVisible = false; }}
     onaction={handleContextMenuAction}
   />
