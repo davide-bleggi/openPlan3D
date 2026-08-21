@@ -76,6 +76,8 @@
   let wallsTransparent = $state(false);
   // Multi-floor stacking
   let showAllFloors = $state(false);
+  /** How far back the stacked view pushes the floors that are not active. */
+  const BACKGROUND_FLOOR_OPACITY = 0.35;
 
   // Walkthrough mode
   let walkthroughMode = $state(false);
@@ -1118,13 +1120,16 @@
 
   /**
    * Build one stair into `target`, with its bottom tread at `baseElevation`.
-   * Stairs are never faded the way a background floor's walls are: in the
-   * stacked view they are what makes the vertical circulation readable.
+   * `opacity` below 1 fades it back with the rest of its floor, so a stair on a
+   * background floor of the stacked view reads as part of that floor.
    */
-  function buildStairInto(stair: Stair, target: THREE.Object3D, baseElevation: number) {
+  function buildStairInto(stair: Stair, target: THREE.Object3D, baseElevation: number, opacity = 1) {
     const layout = buildStairLayout(stair);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7 });
-    const sideMat = new THREE.MeshStandardMaterial({ color: 0xb8956a, roughness: 0.8 });
+    const faded = opacity < 1;
+    const stairMat = (color: number, roughness: number) =>
+      new THREE.MeshStandardMaterial({ color, roughness, transparent: faded, opacity });
+    const mat = stairMat(0xd4a574, 0.7);
+    const sideMat = stairMat(0xb8956a, 0.8);
 
     const stairGroup = new THREE.Group();
 
@@ -1190,6 +1195,10 @@
     const railings = buildStairRailings(stair, layout);
     if (railings.length) {
       const { railMat, postMat } = createRailingMaterials();
+      for (const railingMat of [railMat, postMat]) {
+        railingMat.transparent = faded;
+        railingMat.opacity = opacity;
+      }
       buildRailingMeshes(
         stairGroup,
         railMat,
@@ -2208,7 +2217,7 @@
       if (entry.floor.id === activeF.id) continue;
 
       const tempGroup = new THREE.Group();
-      buildFloorIntoGroup(entry.floor, tempGroup, entry.elevation, 0.35);
+      buildFloorIntoGroup(entry.floor, tempGroup, entry.elevation, BACKGROUND_FLOOR_OPACITY);
 
       // Move children from temp group to wallGroup
       while (tempGroup.children.length > 0) {
@@ -2223,7 +2232,9 @@
     // built here, after the floors, because a flight belongs to the storey it
     // climbs *from* rather than to the floor whose plan it is drawn on.
     for (const placement of stackedStairPlacements(stack)) {
-      buildStairInto(placement.stair, wallGroup, placement.baseElevation);
+      const onActiveFloor = placement.floors.some((f) => f.id === activeF.id);
+      const opacity = onActiveFloor ? 1 : BACKGROUND_FLOOR_OPACITY;
+      buildStairInto(placement.stair, wallGroup, placement.baseElevation, opacity);
     }
 
     // Labels go last, off one bounding box of the finished building, so they

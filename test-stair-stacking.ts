@@ -49,7 +49,7 @@ console.log('=== a "down" stair descends to the floor below ===');
   ]);
   const placements = stackedStairPlacements(stack);
   check('placed one storey down', placements.map((p) => p.baseElevation), [0]);
-  check('still owned by its own floor', placements.map((p) => p.floor.id), ['f1']);
+  check('still owned by its own floor', placements.map((p) => p.floors.map((f) => f.id)), [['f1']]);
 }
 
 console.log('=== one stairwell drawn as up + down renders once ===');
@@ -61,6 +61,7 @@ console.log('=== one stairwell drawn as up + down renders once ===');
   const placements = stackedStairPlacements(stack);
   check('duplicate dropped', placements.map((p) => p.stair.id), ['up', 'up2']);
   check('remaining elevations', placements.map((p) => p.baseElevation), [0, 300]);
+  check('both floors still draw it', placements.map((p) => p.floors.map((f) => f.id)), [['g', 'f1'], ['f1']]);
 }
 
 console.log('=== a stairwell offset in plan is kept ===');

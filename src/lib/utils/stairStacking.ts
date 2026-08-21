@@ -19,8 +19,14 @@ export const STAIR_COINCIDENCE_TOLERANCE = 1;
 
 export interface StackedStairPlacement {
   stair: Stair;
-  /** The floor the stair is stored on. */
-  floor: Floor;
+  /**
+   * Every floor whose plan draws this flight — two of them when the same
+   * stairwell is annotated "up" below and "down" above. Callers style a
+   * placement by whether the active floor is among them, so the one flight
+   * does not read as a background floor's just because the duplicate that
+   * was dropped happened to be the active floor's.
+   */
+  floors: Floor[];
   /** Y of the stair's bottom tread — the floor it climbs *from*. */
   baseElevation: number;
 }
@@ -42,9 +48,14 @@ export function stackedStairPlacements(stack: FloorElevation[]): StackedStairPla
       const baseElevation = (below ?? entry).elevation;
       // The lower floor is visited first, so the surviving placement of a
       // duplicated stairwell is the "up" one — the direction that matches the
-      // geometry actually being drawn.
-      if (placements.some((p) => isSameFlight(p, stair, baseElevation))) continue;
-      placements.push({ stair, floor: entry.floor, baseElevation });
+      // geometry actually being drawn. The duplicate still contributes its
+      // floor, which is what keeps the flight "the active floor's" either way.
+      const existing = placements.find((p) => isSameFlight(p, stair, baseElevation));
+      if (existing) {
+        if (!existing.floors.includes(entry.floor)) existing.floors.push(entry.floor);
+        continue;
+      }
+      placements.push({ stair, floors: [entry.floor], baseElevation });
     }
   }
 
