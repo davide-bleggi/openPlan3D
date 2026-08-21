@@ -37,6 +37,7 @@
     type RailingPoint
   } from '$lib/utils/railings';
   import { computeFloorElevations, defaultFloorName } from '$lib/utils/floorStacking';
+  import { stackedStairPlacements } from '$lib/utils/stairStacking';
   import {
     buildWallSegments,
     doorOpeningHeight,
@@ -75,6 +76,8 @@
   let wallsTransparent = $state(false);
   // Multi-floor stacking
   let showAllFloors = $state(false);
+  /** How far back the stacked view pushes the floors that are not active. */
+  const BACKGROUND_FLOOR_OPACITY = 0.35;
 
   // Walkthrough mode
   let walkthroughMode = $state(false);
@@ -1112,92 +1115,106 @@
   }
 
   function buildStairs(floor: Floor) {
-    if (!floor.stairs) return;
-    for (const stair of floor.stairs) {
-      const layout = buildStairLayout(stair);
-      const mat = new THREE.MeshStandardMaterial({ color: 0xd4a574, roughness: 0.7 });
-      const sideMat = new THREE.MeshStandardMaterial({ color: 0xb8956a, roughness: 0.8 });
+    for (const stair of floor.stairs ?? []) buildStairInto(stair, wallGroup, 0);
+  }
 
-      const stairGroup = new THREE.Group();
+  /**
+   * Build one stair into `target`, with its bottom tread at `baseElevation`.
+   * `opacity` below 1 fades it back with the rest of its floor, so a stair on a
+   * background floor of the stacked view reads as part of that floor.
+   */
+  function buildStairInto(stair: Stair, target: THREE.Object3D, baseElevation: number, opacity = 1) {
+    const layout = buildStairLayout(stair);
+    const faded = opacity < 1;
+    const stairMat = (color: number, roughness: number) =>
+      new THREE.MeshStandardMaterial({ color, roughness, transparent: faded, opacity });
+    const mat = stairMat(0xd4a574, 0.7);
+    const sideMat = stairMat(0xb8956a, 0.8);
 
-      if (layout.type === 'spiral') {
-        const { radius, postRadius, totalAngle, startAngle, riserCount, riserHeight, totalRise, slabThickness } = layout;
-        // Center post
-        const postGeo = new THREE.CylinderGeometry(postRadius, postRadius, totalRise, 8);
-        const post = new THREE.Mesh(postGeo, sideMat);
-        post.position.set(0, totalRise / 2, 0);
-        post.castShadow = true;
-        stairGroup.add(post);
-        // Spiral treads as wedge-shaped steps
-        for (let i = 0; i < riserCount; i++) {
-          const angle = startAngle + (i / riserCount) * totalAngle;
-          const nextAngle = startAngle + ((i + 1) / riserCount) * totalAngle;
-          const y = (i + 1) * riserHeight;
-          // Create wedge shape using ExtrudeGeometry
-          // The extruded shape is laid flat with rotation.x = -PI/2, which maps
-          // shape y to world -z; negate the sines so the winding matches the
-          // 2D plan view (canvas y = world z).
-          const shape = new THREE.Shape();
-          shape.moveTo(postRadius * Math.cos(angle), -postRadius * Math.sin(angle));
-          shape.lineTo(radius * Math.cos(angle), -radius * Math.sin(angle));
-          // Arc outer edge
-          const arcSteps = 4;
-          for (let j = 1; j <= arcSteps; j++) {
-            const a = angle + (nextAngle - angle) * (j / arcSteps);
-            shape.lineTo(radius * Math.cos(a), -radius * Math.sin(a));
-          }
-          shape.lineTo(postRadius * Math.cos(nextAngle), -postRadius * Math.sin(nextAngle));
-          shape.closePath();
-          const extrudeSettings = { depth: slabThickness, bevelEnabled: false };
-          const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-          const tread = new THREE.Mesh(geo, mat);
-          tread.rotation.x = -Math.PI / 2;
-          tread.position.y = y;
-          tread.castShadow = true;
-          tread.receiveShadow = true;
-          stairGroup.add(tread);
+    const stairGroup = new THREE.Group();
+
+    if (layout.type === 'spiral') {
+      const { radius, postRadius, totalAngle, startAngle, riserCount, riserHeight, totalRise, slabThickness } = layout;
+      // Center post
+      const postGeo = new THREE.CylinderGeometry(postRadius, postRadius, totalRise, 8);
+      const post = new THREE.Mesh(postGeo, sideMat);
+      post.position.set(0, totalRise / 2, 0);
+      post.castShadow = true;
+      stairGroup.add(post);
+      // Spiral treads as wedge-shaped steps
+      for (let i = 0; i < riserCount; i++) {
+        const angle = startAngle + (i / riserCount) * totalAngle;
+        const nextAngle = startAngle + ((i + 1) / riserCount) * totalAngle;
+        const y = (i + 1) * riserHeight;
+        // Create wedge shape using ExtrudeGeometry
+        // The extruded shape is laid flat with rotation.x = -PI/2, which maps
+        // shape y to world -z; negate the sines so the winding matches the
+        // 2D plan view (canvas y = world z).
+        const shape = new THREE.Shape();
+        shape.moveTo(postRadius * Math.cos(angle), -postRadius * Math.sin(angle));
+        shape.lineTo(radius * Math.cos(angle), -radius * Math.sin(angle));
+        // Arc outer edge
+        const arcSteps = 4;
+        for (let j = 1; j <= arcSteps; j++) {
+          const a = angle + (nextAngle - angle) * (j / arcSteps);
+          shape.lineTo(radius * Math.cos(a), -radius * Math.sin(a));
         }
-      } else {
-        for (const flight of layout.flights) {
-          buildStairFlight(stairGroup, mat, sideMat, flight, layout.riserHeight, layout.slabThickness);
-        }
-        // Landings sit flush with the top tread of the flight below them, so
-        // the two flights are always physically connected at the turn.
-        for (const landing of layout.landings) {
-          const landGeo = new THREE.BoxGeometry(landing.w, layout.slabThickness, landing.h);
-          const mesh = new THREE.Mesh(landGeo, mat);
-          mesh.position.set(
-            landing.x + landing.w / 2,
-            landing.atRiser * layout.riserHeight - layout.slabThickness / 2,
-            landing.y + landing.h / 2
-          );
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          stairGroup.add(mesh);
-        }
+        shape.lineTo(postRadius * Math.cos(nextAngle), -postRadius * Math.sin(nextAngle));
+        shape.closePath();
+        const extrudeSettings = { depth: slabThickness, bevelEnabled: false };
+        const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const tread = new THREE.Mesh(geo, mat);
+        tread.rotation.x = -Math.PI / 2;
+        tread.position.y = y;
+        tread.castShadow = true;
+        tread.receiveShadow = true;
+        stairGroup.add(tread);
       }
-
-      // Railings on whichever open sides the stair asks for — none of them if
-      // the user has taken them off.
-      const railings = buildStairRailings(stair, layout);
-      if (railings.length) {
-        const { railMat, postMat } = createRailingMaterials();
-        buildRailingMeshes(
-          stairGroup,
-          railMat,
-          postMat,
-          railings.map((run) => run.points),
-          stairRailingHeight(stair)
+    } else {
+      for (const flight of layout.flights) {
+        buildStairFlight(stairGroup, mat, sideMat, flight, layout.riserHeight, layout.slabThickness);
+      }
+      // Landings sit flush with the top tread of the flight below them, so
+      // the two flights are always physically connected at the turn.
+      for (const landing of layout.landings) {
+        const landGeo = new THREE.BoxGeometry(landing.w, layout.slabThickness, landing.h);
+        const mesh = new THREE.Mesh(landGeo, mat);
+        mesh.position.set(
+          landing.x + landing.w / 2,
+          landing.atRiser * layout.riserHeight - layout.slabThickness / 2,
+          landing.y + landing.h / 2
         );
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        stairGroup.add(mesh);
       }
-
-      // `direction` is a plan annotation only: a "down" stair is the same
-      // physical object as the "up" stair on the storey below, so it keeps the
-      // same footprint here instead of being mirrored out of sync with 2D.
-      stairGroup.position.set(stair.position.x, 0, stair.position.y);
-      stairGroup.rotation.y = -(stair.rotation * Math.PI) / 180;
-      wallGroup.add(stairGroup);
     }
+
+    // Railings on whichever open sides the stair asks for — none of them if
+    // the user has taken them off.
+    const railings = buildStairRailings(stair, layout);
+    if (railings.length) {
+      const { railMat, postMat } = createRailingMaterials();
+      for (const railingMat of [railMat, postMat]) {
+        railingMat.transparent = faded;
+        railingMat.opacity = opacity;
+      }
+      buildRailingMeshes(
+        stairGroup,
+        railMat,
+        postMat,
+        railings.map((run) => run.points),
+        stairRailingHeight(stair)
+      );
+    }
+
+    // `direction` is a plan annotation only: a "down" stair is the same
+    // physical object as the "up" stair on the storey below, so it keeps the
+    // same footprint here instead of being mirrored out of sync with 2D. Only
+    // the base elevation differs, and that is resolved by the caller.
+    stairGroup.position.set(stair.position.x, baseElevation, stair.position.y);
+    stairGroup.rotation.y = -(stair.rotation * Math.PI) / 180;
+    target.add(stairGroup);
   }
 
   function buildColumns(floor: Floor) {
@@ -1495,7 +1512,13 @@
     return geo;
   }
 
-  function buildWalls(floor: Floor) {
+  /**
+   * Build one floor at full detail into `wallGroup`, at Y=0.
+   *
+   * `includeStairs` is off in the stacked view, where every floor's stairs are
+   * placed together afterwards so a flight lands on the storey it climbs from.
+   */
+  function buildWalls(floor: Floor, includeStairs = true) {
     clearGroup(wallGroup);
     wallMeshMap.clear();
 
@@ -2158,7 +2181,7 @@
     }
 
     // Stairs
-    buildStairs(floor);
+    if (includeStairs) buildStairs(floor);
 
     // Columns
     buildColumns(floor);
@@ -2180,8 +2203,9 @@
     // The active floor is built full-detail by buildWalls, which clears
     // wallGroup and places everything at Y=0. Lift it to its elevation now,
     // while wallGroup holds nothing else — shifting it after the other floors
-    // were merged in would drag them up to the same height.
-    buildWalls(activeF);
+    // were merged in would drag them up to the same height. Its stairs are left
+    // out here and rebuilt below with every other floor's.
+    buildWalls(activeF, false);
     if (activeEntry.elevation !== 0) {
       for (const child of wallGroup.children) {
         child.position.y += activeEntry.elevation;
@@ -2193,7 +2217,7 @@
       if (entry.floor.id === activeF.id) continue;
 
       const tempGroup = new THREE.Group();
-      buildFloorIntoGroup(entry.floor, tempGroup, entry.elevation, 0.35);
+      buildFloorIntoGroup(entry.floor, tempGroup, entry.elevation, BACKGROUND_FLOOR_OPACITY);
 
       // Move children from temp group to wallGroup
       while (tempGroup.children.length > 0) {
@@ -2201,6 +2225,16 @@
         tempGroup.remove(child);
         wallGroup.add(child);
       }
+    }
+
+    // Stairs come from every floor, not just the active one: they are how the
+    // stacked view reads as one building rather than a pile of plans. They are
+    // built here, after the floors, because a flight belongs to the storey it
+    // climbs *from* rather than to the floor whose plan it is drawn on.
+    for (const placement of stackedStairPlacements(stack)) {
+      const onActiveFloor = placement.floors.some((f) => f.id === activeF.id);
+      const opacity = onActiveFloor ? 1 : BACKGROUND_FLOOR_OPACITY;
+      buildStairInto(placement.stair, wallGroup, placement.baseElevation, opacity);
     }
 
     // Labels go last, off one bounding box of the finished building, so they
