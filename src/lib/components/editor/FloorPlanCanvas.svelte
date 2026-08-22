@@ -321,6 +321,10 @@
   let ctxMenuWall: Wall | null = $state(null);
   let ctxMenuFurniture: FurnitureItem | null = $state(null);
   let ctxMenuRoom: Room | null = $state(null);
+  /** Menu was opened by a long-press: use touch-sized targets and finger-safe placement. */
+  let ctxMenuTouch = $state(false);
+  /** Primary input can't point precisely (finger/stylus) — size the contextbar for it. */
+  let coarsePointer = $state(false);
 
   /**
    * Compute bounding box of all multi-selected elements.
@@ -1979,6 +1983,8 @@
     }
     document.addEventListener('paste', handlePaste);
 
+    coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+
     // Touch input — registered manually so the handlers are non-passive
     // (Svelte attaches touch listeners passively, which blocks preventDefault)
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -1986,7 +1992,7 @@
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
-    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub_fit(); unsub_elevopen(); unsub_elevpick(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
+    return () => { cancelLongPress(); resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub_fit(); unsub_elevopen(); unsub_elevpick(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
   });
 
   /** Compute world bounding box of all elements */
@@ -3130,16 +3136,43 @@
   }
 
   // ── Touch input (phones/tablets) ──────────────────────────────────
-  // One finger drives the existing mouse pipeline via synthetic MouseEvents
-  // (so every tool works unchanged); two fingers pinch-zoom and pan.
+  // One finger drives the existing pointer pipeline via synthetic PointerEvents
+  // (so every tool works unchanged); two fingers pinch-zoom and pan; a finger
+  // held still opens the context menu.
   // Listeners are registered manually in onMount with { passive: false }
   // because we must preventDefault to stop scrolling and the browser's
-  // compatibility mouse events (which would double-fire the handlers).
+  // compatibility mouse events (which would double-fire the handlers). That
+  // same preventDefault also suppresses the browser's own long-press →
+  // contextmenu synthesis, which is why the press is timed here instead.
   let pinchState: { dist: number; cx: number; cy: number } | null = null;
   let singleTouchActive = false;
   let lastTapTime = 0;
   let lastTapX = 0;
   let lastTapY = 0;
+
+  /** How long a finger must stay put before the press opens the context menu. */
+  const LONG_PRESS_MS = 500;
+  /** Movement (px) that reclassifies a press as a drag and cancels the long-press. */
+  const TOUCH_SLOP = 10;
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The long-press fired: the menu owns this gesture, so no pointer events follow. */
+  let longPressFired = false;
+  /**
+   * Whether a synthetic `pointerdown` has been sent for the current touch. It is
+   * deferred until the finger moves (or lifts) so that holding still can open
+   * the menu without first starting a drag we would then have to unwind.
+   */
+  let touchPointerDownSent = false;
+
+  function cancelLongPress() {
+    if (longPressTimer !== null) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
 
   /** Replay a touch as the pointer event the canvas handlers expect. pointerId
    *  -1 marks it synthetic: the placing system skips pointer capture for it (a
@@ -3173,13 +3206,33 @@
   function onTouchStart(e: TouchEvent) {
     e.preventDefault();
     if (e.touches.length === 1) {
+      const t = e.touches[0];
+      // A tap while the menu is open only dismisses it — don't also act on the canvas
+      if (ctxMenuVisible) {
+        ctxMenuVisible = false;
+        singleTouchActive = false;
+        return;
+      }
       singleTouchActive = true;
-      dispatchPointer('pointerdown', e.touches[0].clientX, e.touches[0].clientY);
+      touchStartX = t.clientX;
+      touchStartY = t.clientY;
+      touchPointerDownSent = false;
+      longPressFired = false;
+      cancelLongPress();
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        longPressFired = true;
+        navigator.vibrate?.(10);
+        openContextMenuAt(touchStartX, touchStartY, true);
+      }, LONG_PRESS_MS);
     } else if (e.touches.length === 2) {
+      cancelLongPress();
+      longPressFired = false;
       // Second finger landed: abandon any single-finger drag and start pinching
       if (singleTouchActive) {
-        dispatchPointer('pointerup', e.touches[0].clientX, e.touches[0].clientY);
+        if (touchPointerDownSent) dispatchPointer('pointerup', e.touches[0].clientX, e.touches[0].clientY);
         singleTouchActive = false;
+        touchPointerDownSent = false;
       }
       const a = e.touches[0], b = e.touches[1];
       pinchState = {
@@ -3212,7 +3265,18 @@
       pinchState = { dist, cx, cy };
       markDirty();
     } else if (singleTouchActive && e.touches.length === 1) {
-      dispatchPointer('pointermove', e.touches[0].clientX, e.touches[0].clientY);
+      const t = e.touches[0];
+      if (longPressFired) return; // the menu owns this gesture
+      if (!touchPointerDownSent) {
+        // Still inside the slop radius: keep waiting for the long-press
+        if (Math.hypot(t.clientX - touchStartX, t.clientY - touchStartY) < TOUCH_SLOP) return;
+        // It's a drag. Start the pointer pipeline from where the finger first
+        // landed so handlers that measure from pointerdown get correct deltas.
+        cancelLongPress();
+        dispatchPointer('pointerdown', touchStartX, touchStartY);
+        touchPointerDownSent = true;
+      }
+      dispatchPointer('pointermove', t.clientX, t.clientY);
     }
   }
 
@@ -3226,6 +3290,18 @@
     if (singleTouchActive && e.touches.length === 0) {
       const t = e.changedTouches[0];
       singleTouchActive = false;
+      cancelLongPress();
+      if (longPressFired) {
+        // The press already opened the menu — swallow the lift entirely so it
+        // neither selects, drags, nor counts toward a double-tap.
+        longPressFired = false;
+        touchPointerDownSent = false;
+        lastTapTime = 0;
+        return;
+      }
+      // A tap never moved, so its pointerdown is still pending — send it now
+      if (!touchPointerDownSent) dispatchPointer('pointerdown', touchStartX, touchStartY);
+      touchPointerDownSent = false;
       dispatchPointer('pointerup', t.clientX, t.clientY);
       // Synthesize click so document-level click-outside handlers (menus) fire
       dispatchMouse('click', t.clientX, t.clientY);
@@ -3583,9 +3659,17 @@
 
   function onContextMenu(e: MouseEvent) {
     e.preventDefault();
+    openContextMenuAt(e.clientX, e.clientY, false);
+  }
 
+  /**
+   * Open the context menu at a viewport point. Shared by right-click (desktop)
+   * and long-press (touch) so both paths hit-test and behave identically.
+   */
+  function openContextMenuAt(clientX: number, clientY: number, viaTouch: boolean) {
     // Right-click during a drag aborts it (and nothing else) — the same escape
-    // hatch as Escape, for people who reach for the mouse instead.
+    // hatch as Escape, for people who reach for the mouse instead. Long-press
+    // inherits it, since touch has neither a right button nor an Escape key.
     if (placement.isActive()) {
       placement.end('cancel');
       return;
@@ -3594,7 +3678,7 @@
     // If in measurement mode, use old behaviour
     if (measuring) {
       const rect = canvas.getBoundingClientRect();
-      const wp = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      const wp = screenToWorld(clientX - rect.left, clientY - rect.top);
       if (!measureStart || measureEnd) {
         measureStart = wp;
         measureEnd = null;
@@ -3609,7 +3693,7 @@
 
     // Show context menu
     const rect = canvas.getBoundingClientRect();
-    const wp = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const wp = screenToWorld(clientX - rect.left, clientY - rect.top);
 
     // Hit-test in priority order: furniture > door > window > wall > room > canvas
     const fi = findFurnitureAt(wp);
@@ -3668,8 +3752,9 @@
       }
     }
 
-    ctxMenuX = e.clientX;
-    ctxMenuY = e.clientY;
+    ctxMenuX = clientX;
+    ctxMenuY = clientY;
+    ctxMenuTouch = viaTouch;
     ctxMenuVisible = true;
   }
 
@@ -4039,8 +4124,10 @@
     </div>
   {/if}
 
-  <!-- Contextual Toolbar (hidden while the integrated elevation view covers the canvas) -->
-  {#if (currentSelectedId || currentSelectedIds.size > 0) && currentFloor && currentTool === 'select' && !elevationOpen}
+  <!-- Contextual Toolbar — one-tap verbs for the current selection.
+       Hidden while the integrated elevation view covers the canvas, and while
+       the context menu is open so the two never overlap. -->
+  {#if (currentSelectedId || currentSelectedIds.size > 0) && currentFloor && currentTool === 'select' && !elevationOpen && !ctxMenuVisible}
     {@const el = (() => {
       const f = currentFloor;
       const wall = f.walls.find(w => w.id === currentSelectedId);
@@ -4073,11 +4160,11 @@
     })()}
     {#if el}
       <div
-        class="absolute z-40 flex items-center gap-0.5 bg-white rounded-lg shadow-lg border border-gray-200 px-1 py-0.5"
-        style="left: {el.pos.x}px; top: {el.pos.y - 44}px; transform: translateX(-50%);"
+        class="ctxbar absolute z-40 flex items-center gap-0.5 bg-white rounded-lg shadow-lg border border-gray-200 px-1 py-0.5 {coarsePointer ? 'ctxbar-touch' : ''}"
+        style="left: {el.pos.x}px; top: {Math.max(4, el.pos.y - (coarsePointer ? 62 : 44))}px; transform: translateX(-50%);"
       >
         <button
-          class="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
+          class="ctxbar-btn w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
           title="Duplicate"
           aria-label="Duplicate"
           onclick={() => {
@@ -4094,7 +4181,7 @@
         </button>
         {#if el.type === 'door' && el.door}
           <button
-            class="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
+            class="ctxbar-btn w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
             title="Flip swing"
             aria-label="Flip swing"
             onclick={() => { if (el.door) updateDoor(el.door.id, { swingDirection: el.door.swingDirection === 'left' ? 'right' : 'left' }); }}
@@ -4104,7 +4191,7 @@
         {/if}
         {#if el.type === 'wall' && currentSelectedId && currentSelectedIds.size === 0}
           <button
-            class="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
+            class="ctxbar-btn w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700"
             title="Split wall at midpoint"
             aria-label="Split wall at midpoint"
             onclick={() => {
@@ -4138,9 +4225,9 @@
             {/if}
           </button>
         {/if}
-        <div class="w-px h-5 bg-gray-200 mx-0.5"></div>
+        <div class="ctxbar-sep w-px h-5 bg-gray-200 mx-0.5"></div>
         <button
-          class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-50 text-gray-400 hover:text-red-600"
+          class="ctxbar-btn w-7 h-7 flex items-center justify-center rounded hover:bg-red-50 text-gray-400 hover:text-red-600"
           title="Delete"
           aria-label="Delete"
           onclick={() => {
@@ -4238,8 +4325,26 @@
     targetFurniture={ctxMenuFurniture}
     targetRoom={ctxMenuRoom}
     selectedWalls={selectedWalls}
+    touch={ctxMenuTouch}
     clipboard={$clipboardStore}
     onclose={() => { ctxMenuVisible = false; }}
     onaction={handleContextMenuAction}
   />
 </div>
+
+<style>
+  /* Coarse pointers get 44px targets on the contextbar; mouse keeps the compact 28px. */
+  .ctxbar-touch .ctxbar-btn {
+    width: 44px;
+    height: 44px;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  .ctxbar-touch .ctxbar-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+  .ctxbar-touch .ctxbar-sep {
+    height: 28px;
+  }
+</style>
