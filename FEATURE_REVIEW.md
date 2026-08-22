@@ -12,7 +12,7 @@ Systematic comparison. Each feature gets: ✅ done, 🔧 needs work, ❌ missing
 - ✅ **Wall drag-to-resize** — grab a wall endpoint and drag to resize/reshape; connected corner endpoints move together
 - ✅ **Wall segment editing** — click a wall to select, drag midpoint to move parallel
 - ✅ **Curved walls** — quadratic bezier curves via draggable midpoint handle, toggle in properties panel
-- ✅ **Wall splitting** — click middle of wall to split into two segments (double-click or context toolbar button)
+- ✅ **Wall splitting** — click middle of wall to split into two segments (double-click, the contextbar split button, or Split Wall in the context menu)
 
 ## 2. Doors & Windows
 - ✅ Can place doors and windows on walls
@@ -22,7 +22,7 @@ Systematic comparison. Each feature gets: ✅ done, 🔧 needs work, ❌ missing
 - ✅ **Drag along wall** — click to select, drag to slide along wall
 - ✅ **Size relative to wall** — door default 90cm, window 120cm
 - ✅ **Door/window catalog** — 6 door types + 5 window types with unique 2D renderings, catalog grid in BuildPanel
-- ✅ **Opening direction toggle** — flip swing (left/right) + flip side (inward/outward) via context toolbar
+- ✅ **Opening direction toggle** — flip swing (left/right) + flip side (inward/outward) in the properties panel; flip swing also on the contextbar
 
 ## 3. Furniture Placement
 - ✅ Catalog with categories

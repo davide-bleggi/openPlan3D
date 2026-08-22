@@ -21,13 +21,20 @@
     targetRoom?: Room | null;
     selectedWalls?: Wall[];
     clipboard?: Clipboard | null;
+    /** Opened by a long-press: use touch-sized rows and keep clear of the finger. */
+    touch?: boolean;
     onclose: () => void;
     onaction: (action: string, data?: any) => void;
   }
 
-  let { x, y, visible, targetType, targetId, targetWall, targetFurniture, targetRoom, selectedWalls = [], clipboard, onclose, onaction }: Props = $props();
+  let { x, y, visible, targetType, targetId, targetWall, targetFurniture, targetRoom, selectedWalls = [], clipboard, touch = false, onclose, onaction }: Props = $props();
 
   let menuEl: HTMLDivElement;
+
+  /** Gap kept between the menu and the viewport edges. */
+  const MARGIN = 8;
+  /** How far a touch-opened menu sits from the press point, so the finger doesn't cover it. */
+  const TOUCH_OFFSET = 12;
 
   // Adjust position to keep menu within viewport
   let adjustedX = $state(0);
@@ -43,23 +50,34 @@
   let hiddenWallCount = $derived(selectedWalls?.filter(w => w.hidden).length ?? 0);
 
   $effect(() => {
-    if (visible && menuEl) {
-      const rect = menuEl.getBoundingClientRect();
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      adjustedX = x + rect.width > vw ? vw - rect.width - 8 : x;
-      adjustedY = y + rect.height > vh ? vh - rect.height - 8 : y;
-    } else {
+    if (!visible || !menuEl) {
       adjustedX = x;
       adjustedY = y;
+      return;
     }
+    // Width/height are independent of left/top, so measuring before the new
+    // position is applied is safe. Height is already capped by max-height.
+    const { width, height } = menuEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let nx = touch ? x + TOUCH_OFFSET : x;
+    if (nx + width > vw - MARGIN) nx = touch ? x - width - TOUCH_OFFSET : vw - width - MARGIN;
+    adjustedX = Math.max(MARGIN, nx);
+
+    let ny = y;
+    // On touch, prefer flipping above the press point over sliding up underneath
+    // the finger — sliding up would put the first item right where it is resting.
+    if (touch && y + height > vh - MARGIN && y - height - MARGIN >= MARGIN) ny = y - height;
+    if (ny + height > vh - MARGIN) ny = vh - height - MARGIN;
+    adjustedY = Math.max(MARGIN, ny);
   });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();
   }
 
-  function handleClickOutside(e: MouseEvent) {
+  function handleOutsidePointer(e: Event) {
     if (menuEl && !menuEl.contains(e.target as Node)) {
       onclose();
     }
@@ -71,10 +89,12 @@
   }
 
   onMount(() => {
-    document.addEventListener('mousedown', handleClickOutside, true);
+    document.addEventListener('mousedown', handleOutsidePointer, true);
+    document.addEventListener('touchstart', handleOutsidePointer, true);
     document.addEventListener('keydown', handleKeydown);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside, true);
+      document.removeEventListener('mousedown', handleOutsidePointer, true);
+      document.removeEventListener('touchstart', handleOutsidePointer, true);
       document.removeEventListener('keydown', handleKeydown);
     };
   });
@@ -94,7 +114,7 @@
 {#if visible}
   <div
     bind:this={menuEl}
-    class="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[180px] text-sm select-none"
+    class="ctx-menu fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl py-1 text-sm select-none {touch ? 'ctx-touch min-w-[220px]' : 'min-w-[180px]'}"
     style="left: {adjustedX}px; top: {adjustedY}px;"
     role="menu"
   >
@@ -117,7 +137,6 @@
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('send-to-back')}>
         <span class="ctx-icon">⬇️</span> Send to Back
       </button>
-      <div class="ctx-sep"></div>
       <div class="ctx-sep"></div>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('toggle-lock')}>
         <span class="ctx-icon">{targetFurniture?.locked ? '🔓' : '🔒'}</span> {targetFurniture?.locked ? 'Unlock' : 'Lock'}
@@ -200,10 +219,10 @@
         <span class="ctx-icon">⬜</span> Select All
       </button>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('group')}>
-        <span class="ctx-icon">📦</span> Group Selected (Ctrl+G)
+        <span class="ctx-icon">📦</span> Group Selected{touch ? '' : ' (Ctrl+G)'}
       </button>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('ungroup')}>
-        <span class="ctx-icon">📤</span> Ungroup (Ctrl+Shift+G)
+        <span class="ctx-icon">📤</span> Ungroup{touch ? '' : ' (Ctrl+Shift+G)'}
       </button>
       <button class="ctx-item" role="menuitem" onclick={() => clickItem('add-wall')}>
         <span class="ctx-icon">🧱</span> Add Wall
@@ -217,6 +236,13 @@
 {/if}
 
 <style>
+  .ctx-menu {
+    /* A tall menu near a short viewport scrolls instead of overflowing offscreen */
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
   .ctx-item {
     display: flex;
     align-items: center;
@@ -230,28 +256,47 @@
     color: #374151;
     font-size: 13px;
     white-space: nowrap;
-  }
-  .ctx-item:hover {
-    background: #f3f4f6;
+    /* Suppress the tap-highlight / callout the OS would otherwise draw */
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
   .ctx-danger {
     color: #dc2626;
-  }
-  .ctx-danger:hover {
-    background: #fef2f2;
   }
   /* Dark mode: the panel is repainted dark by the global .bg-white override,
      so the item colors have to follow or the labels become unreadable. */
   :global(html.dark) .ctx-item {
     color: #e5e7eb;
   }
-  :global(html.dark) .ctx-item:hover {
-    background: #374151;
-  }
   :global(html.dark) .ctx-danger {
     color: #f87171;
   }
-  :global(html.dark) .ctx-danger:hover {
+  /* Hover is guarded so a tapped item on touch doesn't keep a stuck highlight;
+     :active gives touch its own press feedback instead. */
+  @media (hover: hover) {
+    .ctx-item:hover {
+      background: #f3f4f6;
+    }
+    .ctx-danger:hover {
+      background: #fef2f2;
+    }
+    :global(html.dark) .ctx-item:hover {
+      background: #374151;
+    }
+    :global(html.dark) .ctx-danger:hover {
+      background: #451a1a;
+    }
+  }
+  .ctx-item:active {
+    background: #e5e7eb;
+  }
+  .ctx-danger:active {
+    background: #fee2e2;
+  }
+  :global(html.dark) .ctx-item:active {
+    background: #374151;
+  }
+  :global(html.dark) .ctx-danger:active {
     background: #451a1a;
   }
   .ctx-hint {
@@ -272,5 +317,24 @@
   }
   :global(html.dark) .ctx-sep {
     background: #374151;
+  }
+
+  /* Touch-opened menu: rows meet the 44px minimum tap target, and the
+     keyboard hints go — they mean nothing on a phone and drive the width. */
+  .ctx-touch .ctx-item {
+    min-height: 44px;
+    padding: 10px 16px;
+    font-size: 15px;
+    gap: 12px;
+  }
+  .ctx-touch .ctx-icon {
+    width: 22px;
+    font-size: 17px;
+  }
+  .ctx-touch .ctx-sep {
+    margin: 6px 0;
+  }
+  .ctx-touch .ctx-hint {
+    display: none;
   }
 </style>
