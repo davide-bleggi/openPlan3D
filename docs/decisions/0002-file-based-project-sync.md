@@ -43,6 +43,14 @@ the tab is hidden. Focus alone is not enough — a window that never lost focus
 fires nothing, leaving only the poll, which reads as the file updating at
 random.
 
+Adopting a file's project can change which project is open: the editor makes a
+blank project for itself when it opens without one, and the file holds the
+other device's, under its own id. The URL is repointed at whatever was
+adopted — otherwise a reload reopens the blank project, empty and apparently
+unsynced, since the file is keyed to the adopted one. The blank project is
+deleted when nothing was ever drawn in it, so the list does not fill with
+throwaway "Untitled Project" entries.
+
 ## Not losing work
 
 Two devices can write the same file, and a sync service can hand back a copy

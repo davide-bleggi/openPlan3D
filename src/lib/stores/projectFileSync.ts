@@ -34,6 +34,7 @@ import {
 import {
   decideSync,
   isEmptyFile,
+  isEmptyProject,
   isLocalDirty,
   nextRevision,
   parseProjectFile,
@@ -295,10 +296,39 @@ export async function checkRemote(): Promise<void> {
 
 /** Replace what is open with the file's version, and note that we are level. */
 async function applyRemote(remote: Project, meta: SyncMeta | null, mtime: number) {
+  const previous = get(currentProject);
   markClean();
   loadProject(remote);
   await localStore.save(remote);
+  await adoptIdentity(previous, remote);
   await stampSynced(remote, meta?.revision ?? null, mtime);
+}
+
+/**
+ * Taking a file's version can hand us a project with a different id than the
+ * one the editor opened: the file holds the other device's project, while the
+ * editor was sitting on the blank project it makes for itself when it opens.
+ * The address bar still names that blank one, so without this a reload would
+ * reopen it — empty, and looking unsynced, since the file is keyed to the
+ * project that was adopted. Point the URL at what is actually open, and throw
+ * the blank project away if nothing was ever drawn in it.
+ */
+async function adoptIdentity(previous: Project | null, remote: Project) {
+  activeProjectId = remote.id;
+  if (!previous || previous.id === remote.id) return;
+
+  if (typeof window !== 'undefined') {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('id') !== remote.id) {
+      url.searchParams.set('id', remote.id);
+      history.replaceState(null, '', url);
+    }
+  }
+
+  if (isEmptyProject(previous)) {
+    await localStore.delete(previous.id);
+    await deleteLink(previous.id);
+  }
 }
 
 // ── Writing the file ────────────────────────────────────────────────

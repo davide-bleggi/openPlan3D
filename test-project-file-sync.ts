@@ -11,6 +11,7 @@ import {
   compareRemote,
   decideSync,
   isEmptyFile,
+  isEmptyProject,
   isLocalDirty,
   nextRevision,
   parseProjectFile,
@@ -159,6 +160,24 @@ const old = reviveProject({ id: 'p2', floors: [{ id: 'f9', walls: [] }] });
 eq('missing per-floor arrays are filled in', [old.floors[0].doors, old.floors[0].stairs, old.floors[0].groups], [[], [], []]);
 eq('a missing active floor falls back to the first', old.activeFloorId, 'f9');
 check('missing dates are invented rather than left undefined', old.updatedAt instanceof Date);
+
+console.log('\n=== a blank project, safe to throw away ===');
+{
+  const blank = (over: any = {}) => project({
+    floors: [{ ...project().floors[0], walls: [], ...over }],
+  });
+  check('nothing drawn in it', isEmptyProject(blank()));
+  check('a wall makes it worth keeping', !isEmptyProject(project()));
+  check('so does a piece of furniture', !isEmptyProject(blank({
+    furniture: [{ id: 'fu1', catalogId: 'sofa', position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1, z: 1 } }],
+  })));
+  check('so does a traced background image', !isEmptyProject(blank({
+    backgroundImage: { url: 'data:,', x: 0, y: 0, scale: 1, opacity: 0.5, rotation: 0 } as any,
+  })));
+  check('so does a stack of floors', !isEmptyProject(project({
+    floors: [{ ...project().floors[0], walls: [] }, { ...project().floors[0], id: 'f2', walls: [] }],
+  })));
+}
 
 console.log('\n=== suggested file name ===');
 eq('takes the project name', suggestedFileName('Casa al mare'), 'Casa al mare.openplan.json');

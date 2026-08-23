@@ -200,6 +200,32 @@ export function isEmptyFile(text: string): boolean {
   return text.trim().length === 0;
 }
 
+/**
+ * Nothing has ever been drawn in this project — it is indistinguishable from
+ * the blank one the editor makes for itself when it opens without a project.
+ * Used to decide whether such a throwaway can be cleared out once the file it
+ * was pointed at turns out to hold a different project.
+ */
+export function isEmptyProject(project: Project): boolean {
+  if (project.floors.length !== 1) return false;
+  return project.floors.every(
+    (f) =>
+      !f.walls?.length &&
+      !f.rooms?.length &&
+      !f.doors?.length &&
+      !f.windows?.length &&
+      !f.furniture?.length &&
+      !f.stairs?.length &&
+      !f.columns?.length &&
+      !f.entourage?.length &&
+      !f.guides?.length &&
+      !f.measurements?.length &&
+      !f.annotations?.length &&
+      !f.textAnnotations?.length &&
+      !f.backgroundImage,
+  );
+}
+
 /** Default filename offered when a project is first given a file. */
 export function suggestedFileName(projectName: string): string {
   const safe = (projectName || 'floorplan')
