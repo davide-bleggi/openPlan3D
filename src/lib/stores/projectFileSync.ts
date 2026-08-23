@@ -102,8 +102,12 @@ function patch(changes: Partial<FileSyncState>) {
   fileSync.update((s) => ({ ...s, ...changes }));
 }
 
-/** How often the linked file is re-checked while the editor is open. */
+/** Backstop poll: how often the file is re-checked when nothing else prompts it. */
 const WATCH_INTERVAL_MS = 15_000;
+
+/** Floor between two interaction-driven checks, so orbiting in 3D or dragging
+ *  in the plan cannot turn every pointer press into a file read. */
+const INTERACTION_THROTTLE_MS = 3_000;
 
 const DEVICE_ID_KEY = 'o3d_device_id';
 
@@ -197,6 +201,7 @@ export function stopProjectFileSync() {
   if (typeof window !== 'undefined') {
     window.removeEventListener('focus', onWake);
     document.removeEventListener('visibilitychange', onWake);
+    document.removeEventListener('pointerdown', onInteraction, true);
   }
   link = null;
   activeProjectId = null;
@@ -206,11 +211,31 @@ function onWake() {
   if (document.visibilityState === 'visible') void checkRemote();
 }
 
+/**
+ * Coming back to the tab is the obvious moment to look at the file, but it is
+ * not the only one: a window that never lost focus fires nothing, and then the
+ * poll below is all there is — which reads as the file updating at random.
+ * Any press inside the page counts as "the user is here", throttled so a drag
+ * or an orbit does not check on every frame.
+ */
+let lastInteractionCheck = 0;
+function onInteraction() {
+  const now = Date.now();
+  if (now - lastInteractionCheck < INTERACTION_THROTTLE_MS) return;
+  lastInteractionCheck = now;
+  void checkRemote();
+}
+
 function startWatching() {
   if (watchTimer || typeof window === 'undefined') return;
-  watchTimer = setInterval(() => void checkRemote(), WATCH_INTERVAL_MS);
+  watchTimer = setInterval(() => {
+    // A hidden tab has nobody to show a pull to, and gets one on the way back.
+    if (document.visibilityState === 'visible') void checkRemote();
+  }, WATCH_INTERVAL_MS);
   window.addEventListener('focus', onWake);
   document.addEventListener('visibilitychange', onWake);
+  // Capture phase: the 3D canvas and the plan both stop pointer events short.
+  document.addEventListener('pointerdown', onInteraction, true);
 }
 
 /** Re-request write permission. Must be called from a user gesture. */

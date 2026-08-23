@@ -35,9 +35,13 @@ link lives in **IndexedDB** (`openplan-project-files`), not localStorage. Write
 permission lapses when the tab closes and re-granting it needs a user gesture,
 which is why a reconnect button exists rather than a silent retry.
 
-Writes ride the existing 5-second autosave debounce. While the editor is open
-the file is re-checked every 15 seconds and on tab focus, so a copy arriving
-from another device is noticed without the user doing anything.
+Writes ride the existing 5-second autosave debounce. Reads are prompted by
+whatever says "the user is looking at this": coming back to the tab (window
+`focus`, `visibilitychange`), any pointer press inside the page (throttled to
+one check every 3 seconds), and a 15-second poll as a backstop, skipped while
+the tab is hidden. Focus alone is not enough — a window that never lost focus
+fires nothing, leaving only the poll, which reads as the file updating at
+random.
 
 ## Not losing work
 

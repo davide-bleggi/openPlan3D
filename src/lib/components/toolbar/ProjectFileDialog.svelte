@@ -78,35 +78,31 @@
       <div class="p-4 space-y-4">
         {#if sync.status === 'unsupported'}
           <p class="text-sm text-gray-600 dark:text-gray-300">
-            This browser cannot hand a file to a web app and keep it — Safari on
-            iPhone and iPad, in particular. The project stays saved in this
-            browser.
+            This browser can't keep hold of a file — Safari on iPhone and iPad in
+            particular. The project stays saved here.
           </p>
           <p class="text-xs text-gray-500 dark:text-gray-400">
-            To move it between devices, use <strong>Export → Download JSON</strong>
-            and <strong>Export → Import JSON</strong> on the other one. On a
-            desktop browser (Chrome, Edge, or Safari on macOS) the same project
-            can be given a file and kept in sync automatically.
+            To move it, use <strong>Export → Download JSON</strong>, then
+            <strong>Import JSON</strong> on the other device.
           </p>
 
         {:else if sync.pendingLink}
           <div class="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
             <p class="text-sm font-semibold text-amber-800 dark:text-amber-200">That file already holds a project</p>
             <p class="text-xs text-amber-700 dark:text-amber-300">
-              <strong>{sync.pendingLink.fileName}</strong> contains
-              “{sync.pendingLink.project.name}”, saved {when(sync.pendingLink.meta?.savedAt ?? sync.pendingLink.project.updatedAt)}.
+              It holds “{sync.pendingLink.project.name}”, saved {when(sync.pendingLink.meta?.savedAt ?? sync.pendingLink.project.updatedAt)}.
             </p>
             <div class="flex flex-wrap gap-2 pt-1">
               <button
                 class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 disabled={working}
                 onclick={() => run(() => resolvePendingLink('adopt'))}
-              >Open what is in the file</button>
+              >Open the file's version</button>
               <button
                 class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 disabled:opacity-50"
                 disabled={working}
                 onclick={() => run(() => resolvePendingLink('overwrite'))}
-              >Overwrite it with this project</button>
+              >Overwrite with this project</button>
               <button
                 class="px-3 py-1.5 text-xs rounded-lg text-gray-500 hover:text-gray-700 dark:text-gray-400"
                 disabled={working}
@@ -117,10 +113,9 @@
 
         {:else if sync.status === 'unlinked'}
           <p class="text-sm text-gray-600 dark:text-gray-300">
-            Give this project a file and it autosaves into it. Put that file in a
-            folder something else already syncs — iCloud Drive, Dropbox, OneDrive,
-            Syncthing, a network share — and the project follows you to your other
-            devices. Nothing is uploaded to us; the sync service moves the file.
+            The project autosaves into a file you choose. Keep that file in a
+            folder iCloud Drive, Dropbox or Syncthing already syncs and it
+            follows you between devices — nothing is uploaded to us.
           </p>
           <div class="flex flex-wrap gap-2">
             <button
@@ -135,9 +130,8 @@
             >Use an existing project file…</button>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">
-            On another device, pick the file that arrived there with
-            <strong>Use an existing project file…</strong> — same project, carried
-            over by the sync service.
+            On the other device, pick the same file with <strong>Use an existing
+            project file…</strong>
           </p>
 
         {:else}
@@ -154,14 +148,13 @@
           {#if sync.status === 'permission-required'}
             <div class="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
               <p class="text-sm text-amber-800 dark:text-amber-200">
-                The browser needs your permission again before it can read and write
-                this file — it asks once per session.
+                The browser asks for file permission once per session.
               </p>
               <button
                 class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
                 disabled={working}
                 onclick={() => run(requestFilePermission)}
-              >Reconnect the file</button>
+              >Reconnect</button>
             </div>
           {/if}
 
@@ -174,9 +167,9 @@
               </p>
               <p class="text-xs text-red-700 dark:text-red-300">
                 {sync.conflict.reason === 'remote-newer'
-                  ? 'Another device saved this project, and you have unsaved changes here. Nothing has been overwritten — pick which version wins.'
-                  : 'The file holds an older version than the one already synced here, which usually means the sync service restored a stale copy. Nothing has been overwritten.'}
-                The file holds “{sync.conflict.project.name}”, saved
+                  ? 'Another device saved while you had unsaved changes here.'
+                  : 'The file is older than the version already synced here — usually a stale copy restored by the sync service.'}
+                Nothing has been overwritten. It holds “{sync.conflict.project.name}”, saved
                 {when(sync.conflict.meta?.savedAt ?? sync.conflict.project.updatedAt)}.
               </p>
               <div class="flex flex-wrap gap-2 pt-1">
@@ -184,16 +177,16 @@
                   class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
                   disabled={working}
                   onclick={() => run(resolveWithLocal)}
-                >Keep mine, overwrite the file</button>
+                >Keep mine</button>
                 <button
                   class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 disabled:opacity-50"
                   disabled={working}
                   onclick={() => run(resolveWithRemote)}
-                >Use the file, discard my changes</button>
+                >Use the file's</button>
               </div>
               <p class="text-[11px] text-red-600/80 dark:text-red-300/80">
-                Losing either side would be a shame: <strong>Export → Download JSON</strong>
-                saves a copy of what is open before you choose.
+                <strong>Export → Download JSON</strong> saves a copy of what is
+                open before you choose.
               </p>
             </div>
           {/if}
@@ -202,27 +195,29 @@
             <p class="text-xs text-red-600 dark:text-red-400">{sync.error}</p>
           {/if}
 
-          <div class="flex flex-wrap gap-2 pt-1 border-t border-gray-100 dark:border-gray-700">
+          <!-- The two everyday actions on the left; leaving the file is
+               destructive-ish and lives apart from them, on the right. -->
+          <div class="flex items-center gap-2 pt-4 border-t border-gray-100 dark:border-gray-700">
             <button
-              class="mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+              class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
               disabled={working || sync.status === 'permission-required'}
               onclick={() => run(syncNow)}
-            >Save to file now</button>
+            >Save now</button>
             <button
-              class="mt-3 px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 disabled:opacity-50"
+              class="px-3 py-1.5 text-xs rounded-lg bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 disabled:opacity-50"
               disabled={working}
               onclick={() => run(linkNewFile)}
             >Change file…</button>
+            <div class="flex-1"></div>
             <button
-              class="mt-3 px-3 py-1.5 text-xs rounded-lg text-gray-500 hover:text-red-600 dark:text-gray-400 disabled:opacity-50"
+              class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-900/20 disabled:opacity-50"
               disabled={working}
               onclick={() => run(unlinkFile)}
             >Stop syncing</button>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">
-            The project autosaves into this file every few seconds and is
-            re-checked while the editor is open, so a version arriving from
-            another device is picked up on its own.
+            Autosaves every few seconds, and picks up other devices' changes on
+            its own.
           </p>
         {/if}
       </div>
