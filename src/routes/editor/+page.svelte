@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { currentProject, viewMode, selectedElementId, selectedRoomId, createDefaultProject, loadProject, selectedTool, placingFurnitureId, elevationWallId, elevationPickMode } from '$lib/stores/project';
   import { localStore } from '$lib/services/datastore';
+  import { initProjectFileSync, stopProjectFileSync } from '$lib/stores/projectFileSync';
   import { createProjectFromRoomPlan, isRoomPlanJson } from '$lib/utils/roomplanImport';
   import TopBar from '$lib/components/toolbar/TopBar.svelte';
   import BuildPanel from '$lib/components/sidebar/BuildPanel.svelte';
@@ -102,6 +104,16 @@
     }
   }
 
+  /**
+   * Hand the open project to the file-sync machinery (issue #29). If it has a
+   * base file, this is what reads it back — so reopening a project, here or on
+   * a device the sync service has since reached, starts from the file.
+   */
+  function startFileSync() {
+    const p = get(currentProject);
+    if (p) void initProjectFileSync(p);
+  }
+
   viewMode.subscribe((m) => {
     mode = m;
     if (m === '3d') {
@@ -126,6 +138,7 @@
         const code = rawCode.toUpperCase();
         if (/^[A-Z2-9]{4,32}$/.test(code)) {
           if (await importCaptureFromCode(code)) {
+            startFileSync();
             ready = true;
             return;
           }
@@ -152,6 +165,7 @@
         await localStore.save(p);
         history.replaceState(null, '', `/editor?id=${p.id}`);
       }
+      startFileSync();
       ready = true;
     })();
 
@@ -162,7 +176,7 @@
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => localStore.save(p), 500);
     });
-    return () => { unsub(); clearTimeout(saveTimeout); };
+    return () => { unsub(); clearTimeout(saveTimeout); stopProjectFileSync(); };
   });
 </script>
 
