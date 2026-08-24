@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { localStore } from '$lib/services/datastore';
+  import { deleteLink, isFileSystemAccessSupported, listLinks } from '$lib/services/projectFile';
+  import { openProjectFromFile } from '$lib/stores/projectFileSync';
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import WelcomeScreen from '$lib/components/WelcomeScreen.svelte';
   import { houseTemplates } from '$lib/utils/houseTemplates';
@@ -15,6 +17,10 @@
   let renameValue = $state('');
   let contextMenuId = $state<string | null>(null);
   let showTemplateModal = $state(false);
+  /** Projects backed by a file (issue #29): project id → file name. */
+  let fileLinks = $state<Record<string, string>>({});
+  let fileSupported = $state(false);
+  let openError = $state<string | null>(null);
 
   onMount(async () => {
     projects = await localStore.list();
@@ -26,6 +32,8 @@
       thumbs[p.id] = localStore.getThumbnail(p.id);
     }
     thumbnails = thumbs;
+    fileSupported = isFileSystemAccessSupported();
+    fileLinks = Object.fromEntries((await listLinks()).map((l) => [l.projectId, l.fileName]));
     const seen = localStorage.getItem('hasSeenWelcome');
     if (!seen && projects.length === 0) {
       showWelcome = true;
@@ -48,8 +56,28 @@
     goto(`${base}/editor?id=${p.id}`);
   }
 
+  /**
+   * Open a project straight from its file — how a second device picks up a
+   * project the sync service has dropped into a watched folder.
+   */
+  async function openFromFile() {
+    openError = null;
+    try {
+      const opened = await openProjectFromFile();
+      if (!opened) return;
+      currentProject.set(opened.project);
+      goto(`${base}/editor?id=${opened.project.id}`);
+    } catch (e: any) {
+      openError = e?.message ?? 'Could not open that file.';
+    }
+  }
+
   async function deleteProject(id: string) {
     await localStore.delete(id);
+    // The file itself is the user's — only our link to it goes.
+    await deleteLink(id);
+    const { [id]: _removed, ...rest } = fileLinks;
+    fileLinks = rest;
     confirmDeleteId = null;
     projects = (await localStore.list()).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
@@ -116,6 +144,16 @@
         <p class="text-sm text-white/50 mt-0.5">{projects.length} project{projects.length !== 1 ? 's' : ''}</p>
       </div>
       <div class="flex items-center gap-3">
+        {#if fileSupported}
+          <button
+            onclick={openFromFile}
+            class="px-4 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 font-medium text-sm transition-all flex items-center gap-2 border border-white/20"
+            title="Open a project file from a synced folder"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            Open from file
+          </button>
+        {/if}
         <button
           onclick={() => showTemplateModal = true}
           class="px-4 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 font-medium text-sm transition-all flex items-center gap-2 border border-white/20"
@@ -135,6 +173,12 @@
   </div>
 
   <div class="max-w-5xl mx-auto px-6 py-8">
+    {#if openError}
+      <div class="mb-5 rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm flex items-start gap-3" role="alert">
+        <span class="flex-1">{openError}</span>
+        <button onclick={() => openError = null} class="text-red-400 hover:text-red-600 leading-none" aria-label="Dismiss">✕</button>
+      </div>
+    {/if}
     {#if projects.length === 0}
       <div class="text-center py-24">
         <div class="w-16 h-16 bg-gray-200 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -185,6 +229,12 @@
                 </a>
               {/if}
               <p class="text-xs text-gray-400 mt-1">{formatDate(project.updatedAt)}</p>
+              {#if fileLinks[project.id]}
+                <p class="mt-1.5 inline-flex items-center gap-1 text-[11px] text-emerald-600 bg-emerald-50 border border-emerald-100 rounded px-1.5 py-0.5 max-w-full" title={`Synced with ${fileLinks[project.id]}`}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="truncate">{fileLinks[project.id]}</span>
+                </p>
+              {/if}
             </div>
 
             <!-- Actions menu button -->

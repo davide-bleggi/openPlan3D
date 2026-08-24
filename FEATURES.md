@@ -80,6 +80,8 @@
 - [x] Load from localStorage
 - [x] Create new project
 - [x] Delete project
+- [x] Back a project with a file and autosave into it
+- [x] Cross-device editing via an externally synced folder (no cloud of ours)
 - [ ] Export as PNG
 - [ ] Export as JSON download
 

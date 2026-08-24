@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import { currentProject } from './project';
 import { localStore } from '$lib/services/datastore';
 import { saveSnapshot } from '$lib/stores/versionHistory';
+import { syncProjectFile } from '$lib/stores/projectFileSync';
 
 export type SaveState = 'saved' | 'unsaved' | 'saving';
 
@@ -61,6 +62,9 @@ async function autoSave() {
     captureThumbnail(p.id);
     saveState.set('saved');
     lastSavedAt.set(new Date());
+    // A project backed by a file autosaves into it on the same beat; when it
+    // has none this returns immediately.
+    void syncProjectFile(p);
   } catch (e) {
     console.error('[AutoSave] Failed:', e);
     saveState.set('unsaved');
@@ -79,6 +83,7 @@ export async function manualSave() {
     saveSnapshot(p, 'Manual save');
     saveState.set('saved');
     lastSavedAt.set(new Date());
+    await syncProjectFile(p);
   } catch (e) {
     console.error('[Save] Failed:', e);
     saveState.set('unsaved');

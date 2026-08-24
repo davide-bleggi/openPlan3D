@@ -16,6 +16,8 @@
   import { saveState, lastSavedAt, manualSave, initAutoSave } from '$lib/stores/saveStatus';
   import { initVersionHistory, snapshotOnAction } from '$lib/stores/versionHistory';
   import VersionHistoryPanel from './VersionHistoryPanel.svelte';
+  import ProjectFileDialog from './ProjectFileDialog.svelte';
+  import { fileSync } from '$lib/stores/projectFileSync';
 
   let settingsOpen = $state(false);
   let addFloorOpen = $state(false);
@@ -23,6 +25,7 @@
   let floorMenuRef: HTMLDivElement | undefined = $state();
   let areaOpen = $state(false);
   let versionHistoryOpen = $state(false);
+  let projectFileOpen = $state(false);
 
   let projectName = $state('');
   let mode = $state<'2d' | '3d'>('2d');
@@ -51,6 +54,39 @@
   );
   /** Position of the floor being edited — the same `2F` badge the menu rows use. */
   let activeFloorLevel = $derived(activeFloorEntry?.level ?? 0);
+
+  /** Project file sync (issue #29): one chip, whatever the file is doing. */
+  let fileChip = $derived.by(() => {
+    switch ($fileSync.status) {
+      case 'idle':
+        return { label: 'File synced', tone: 'text-emerald-300', title: `Autosaving to ${$fileSync.fileName}` };
+      case 'syncing':
+        return { label: 'Syncing…', tone: 'text-amber-300 animate-pulse', title: `Writing ${$fileSync.fileName}` };
+      case 'conflict':
+        return { label: 'File conflict', tone: 'text-red-300', title: 'This project changed elsewhere — pick which version wins' };
+      case 'permission-required':
+        return { label: 'Reconnect file', tone: 'text-amber-300', title: 'The browser needs permission for the project file again' };
+      case 'error':
+        return { label: 'File error', tone: 'text-red-300', title: $fileSync.error ?? 'The project file could not be synced' };
+      case 'unsupported':
+        return { label: 'No file sync', tone: 'text-white/40', title: 'This browser cannot keep a project file — export/import instead' };
+      default:
+        return { label: 'Set project file', tone: 'text-white/60', title: 'Back this project with a file kept in sync across devices' };
+    }
+  });
+
+  // A clash never resolves itself, and it stops the autosave to the file until
+  // the user picks a side — so put the panel in front of them rather than
+  // leaving a chip to be noticed.
+  let conflictShown = false;
+  $effect(() => {
+    if ($fileSync.status === 'conflict' && !conflictShown) {
+      conflictShown = true;
+      projectFileOpen = true;
+    } else if ($fileSync.status !== 'conflict') {
+      conflictShown = false;
+    }
+  });
 
   function setMode(m: '2d' | '3d') {
     viewMode.set(m);
@@ -226,6 +262,7 @@
       if (e.key === 'Escape' && moreOpen) moreOpen = false;
       if (e.key === 'Escape' && floorMenuOpen) floorMenuOpen = false;
       if (e.key === 'Escape' && addFloorOpen) addFloorOpen = false;
+      if (e.key === 'Escape' && projectFileOpen) projectFileOpen = false;
       if (e.key === 'Escape' && versionHistoryOpen) versionHistoryOpen = false;
       if (e.key === 'Escape' && areaOpen) areaOpen = false;
     }
@@ -468,6 +505,7 @@
           <div class="h-px bg-gray-100 my-1"></div>
         {/if}
         <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={toggleElevationView}>{$elevationWallId ? '✓ ' : ''}Elevation View</button>
+        <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={() => { projectFileOpen = true; moreOpen = false; }}>Project File…</button>
         <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={() => { versionHistoryOpen = true; moreOpen = false; }}>Version History</button>
         <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={() => { areaOpen = true; moreOpen = false; }}>Area Summary</button>
         <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left" onclick={() => { settingsOpen = true; moreOpen = false; }}>Settings</button>
@@ -536,6 +574,17 @@
     {/if}
   </div>
 
+  <!-- Project file sync status / entry point (issue #29) -->
+  <button
+    onclick={() => projectFileOpen = true}
+    class="flex items-center gap-1 px-2 py-1 rounded hover:bg-white/10 transition-colors max-md:hidden text-[11px] font-medium whitespace-nowrap {fileChip.tone}"
+    title={fileChip.title}
+    aria-label="Project file"
+  >
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+    <span>{fileChip.label}</span>
+  </button>
+
   <span
     class="text-[11px] font-medium transition-all duration-300 max-md:hidden {$saveState === 'saved' ? 'text-emerald-400' : $saveState === 'saving' ? 'text-amber-300 animate-pulse' : 'text-white/50'}"
     title={lastSavedText || 'Not saved yet'}
@@ -556,6 +605,7 @@
 <SettingsDialog bind:open={settingsOpen} />
 <AddFloorDialog bind:open={addFloorOpen} />
 <VersionHistoryPanel bind:open={versionHistoryOpen} />
+<ProjectFileDialog bind:open={projectFileOpen} />
 
 {#if areaOpen}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
