@@ -113,9 +113,8 @@
 
         {:else if sync.status === 'unlinked'}
           <p class="text-sm text-gray-600 dark:text-gray-300">
-            The project autosaves into a file you choose. Keep it in a folder
-            iCloud Drive, Dropbox or Syncthing already syncs and it follows you
-            between devices.
+            The project autosaves into a file you choose. Put it in a synced
+            folder and it follows you between devices.
           </p>
           <!-- One button makes the file, the other joins one that is already
                there. The labels have to carry that difference on their own. -->
