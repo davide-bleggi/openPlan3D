@@ -113,25 +113,29 @@
 
         {:else if sync.status === 'unlinked'}
           <p class="text-sm text-gray-600 dark:text-gray-300">
-            The project autosaves into a file you choose. Keep that file in a
-            folder iCloud Drive, Dropbox or Syncthing already syncs and it
-            follows you between devices — nothing is uploaded to us.
+            The project autosaves into a file you choose. Keep it in a folder
+            iCloud Drive, Dropbox or Syncthing already syncs and it follows you
+            between devices.
           </p>
+          <!-- One button makes the file, the other joins one that is already
+               there. The labels have to carry that difference on their own. -->
           <div class="flex flex-wrap gap-2">
             <button
               class="px-3 py-2 text-sm font-semibold rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
               disabled={working}
+              title="Create the file that will back this project"
               onclick={() => run(linkNewFile)}
-            >Choose a file…</button>
+            >Create a file…</button>
             <button
               class="px-3 py-2 text-sm rounded-lg bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 disabled:opacity-50"
               disabled={working}
+              title="Open a project file that is already in the synced folder"
               onclick={() => run(linkExistingFile)}
-            >Use an existing project file…</button>
+            >Use an existing file…</button>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">
-            On the other device, pick the same file with <strong>Use an existing
-            project file…</strong>
+            Create one on the first device; on the others, use the file that has
+            arrived there.
           </p>
 
         {:else}

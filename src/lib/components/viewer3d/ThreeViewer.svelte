@@ -54,6 +54,10 @@
   // Dirty flag — only render when scene changes or camera moves
   let sceneDirty = true;
   function markSceneDirty() { sceneDirty = true; }
+  /** Which project the camera was last framed on — null until it ever was. */
+  let framedProjectId: string | null = null;
+  /** Set when the next build should re-frame regardless (see frameCameraIfNeeded). */
+  let refitOnNextBuild = false;
   let pointerControls: PointerLockControls;
   let animId: number;
   let currentFloor: Floor | null = null;
@@ -986,8 +990,8 @@
     }
   }
 
-  function autoCenterCamera(floor: Floor) {
-    if (floor.walls.length === 0) return;
+  function autoCenterCamera(floor: Floor): boolean {
+    if (floor.walls.length === 0) return false;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (const w of floor.walls) {
       for (const p of [w.start, w.end]) {
@@ -1001,6 +1005,7 @@
     controls.target.set(cx, 100, cz);
     camera.position.set(cx + size * 1.8, size * 1.4, cz + size * 1.8);
     controls.update();
+    return true;
   }
 
   /** Generate a wall texture. wallWidth/wallHeight in cm to set proper tiling. */
@@ -2185,8 +2190,6 @@
 
     // Columns
     buildColumns(floor);
-
-    autoCenterCamera(floor);
   }
 
   /** Build all floors stacked vertically in 3D */
@@ -2247,9 +2250,6 @@
       const name = entry.floor.name || defaultFloorName(entry.floor, entry.index);
       addFloorLabel(name, entry.elevation + entry.height / 2, labelX, center.z);
     }
-
-    // Re-center camera to encompass all floors
-    autoCenterCameraAllFloors();
   }
 
   function addFloorLabel(name: string, y: number, x: number, z: number) {
@@ -2382,14 +2382,17 @@
     }
   }
   
-  function autoCenterCameraAllFloors() {
+  function autoCenterCameraAllFloors(): boolean {
+    if (!wallGroup) return false;
     const box = new THREE.Box3().setFromObject(wallGroup);
+    if (box.isEmpty()) return false;
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 400);
     controls.target.copy(center);
     camera.position.set(center.x + maxDim * 1.2, center.y + maxDim * 0.8, center.z + maxDim * 1.2);
     controls.update();
+    return true;
   }
   
   /** Apply the shared Furniture toggle to the objects tagged during the build. */
@@ -2409,7 +2412,30 @@
       buildWalls(currentFloor);
     }
     applyFurnitureVisibility();
+    frameCameraIfNeeded();
     markSceneDirty();
+  }
+
+  /**
+   * Frame the camera on the model the first time there is something to see,
+   * and then leave it alone. The scene is rebuilt on every change to the
+   * project — an edit in the plan, a newer version arriving from the synced
+   * file — and re-framing on each of those throws away whatever the user had
+   * lined up. A different project, a switch between one floor and the stack,
+   * or the Fit button are the cases where a fresh framing is what was asked
+   * for.
+   */
+  function frameCameraIfNeeded() {
+    const projectId = get(currentProject)?.id ?? null;
+    if (!refitOnNextBuild && projectId === framedProjectId) return;
+    const framed = showAllFloors
+      ? autoCenterCameraAllFloors()
+      : currentFloor
+        ? autoCenterCamera(currentFloor)
+        : false;
+    if (!framed) return;
+    framedProjectId = projectId;
+    refitOnNextBuild = false;
   }
 
   function onKeyDown(event: KeyboardEvent) {
@@ -2710,7 +2736,7 @@
   <div class="absolute top-4 right-4 z-50 flex gap-1.5">
     <!-- Multi-Floor Stacking Toggle -->
     <button
-      onclick={() => { showAllFloors = !showAllFloors; rebuildScene(); }}
+      onclick={() => { showAllFloors = !showAllFloors; refitOnNextBuild = true; rebuildScene(); }}
       class="p-2 rounded-lg transition-colors {showAllFloors ? 'bg-purple-600 text-white ring-2 ring-purple-300' : 'bg-black/70 text-white hover:bg-black/80'}"
       title={showAllFloors ? 'Active Floor Only' : 'Show All Floors Stacked'}
       aria-label={showAllFloors ? 'Active Floor Only' : 'Show All Floors Stacked'}
