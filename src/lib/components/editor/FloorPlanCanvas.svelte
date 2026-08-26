@@ -8,6 +8,7 @@
   import { getMaterial } from '$lib/utils/materials';
   import { getCatalogItem, furnitureSize } from '$lib/utils/furnitureCatalog';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
+  import { snapFurnitureToWall as snapFurnitureToWallGeometry, WALL_SNAP_DIST, type WallSnap } from '$lib/utils/furnitureSnap';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
   import { roomPresets, placePreset } from '$lib/utils/roomPresets';
@@ -133,7 +134,6 @@
   const GRID = 20;
   const SNAP = 10;
   const MAGNETIC_SNAP = 15;
-  const WALL_SNAP_DIST = 30; // cm — distance threshold to snap furniture to wall
 
   // Store subscriptions
   let currentFloor: Floor | null = $state(null);
@@ -375,68 +375,13 @@
   /**
    * Snap furniture position so its edge is flush against the nearest wall.
    * Returns adjusted position and rotation, or null if no wall is close enough.
+   * The geometry itself lives in furnitureSnap.ts, shared with the 3D view.
    */
-  function snapFurnitureToWall(pos: Point, size: { width: number; depth: number }, currentRotation: number): { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null {
+  function snapFurnitureToWall(pos: Point, size: { width: number; depth: number }): WallSnap | null {
     if (!currentFloor) return null;
     // Wall snapping is snapping: the Snap switch turns it off like everything else.
     if (!currentSnapEnabled) return null;
-
-    // Furniture half-depth (the "back" dimension that goes against the wall)
-    const halfDepth = size.depth / 2;
-
-    let bestDist = WALL_SNAP_DIST;
-    let bestResult: { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null = null;
-
-    for (const wall of currentFloor.walls) {
-      const wx = wall.end.x - wall.start.x;
-      const wy = wall.end.y - wall.start.y;
-      const wLen = Math.hypot(wx, wy);
-      if (wLen < 1) continue;
-
-      // Unit vectors along wall and perpendicular (normal)
-      const ux = wx / wLen, uy = wy / wLen;
-      const nx = -uy, ny = ux; // normal pointing "left" of wall direction
-
-      // Project furniture center onto wall line
-      const dx = pos.x - wall.start.x;
-      const dy = pos.y - wall.start.y;
-      const along = dx * ux + dy * uy; // projection along wall
-      const perp = dx * nx + dy * ny;  // signed distance from wall center-line
-
-      // Check if projection falls within wall segment (with some margin)
-      if (along < -size.width / 2 || along > wLen + size.width / 2) continue;
-
-      const wallHalfThickness = wall.thickness / 2;
-      // Distance from furniture center to wall surface on the side the furniture is on
-      const absDist = Math.abs(perp) - wallHalfThickness;
-
-      // We want the furniture edge to touch the wall, so target distance = halfDepth
-      const snapDist = Math.abs(absDist - halfDepth);
-
-      if (snapDist < bestDist) {
-        bestDist = snapDist;
-        const side: 'normal' | 'anti' = perp >= 0 ? 'normal' : 'anti';
-        const sign = perp >= 0 ? 1 : -1;
-        // Position: push center so edge is flush with wall surface
-        const targetPerp = sign * (wallHalfThickness + halfDepth);
-        const clampedAlong = Math.max(size.width / 2, Math.min(wLen - size.width / 2, along));
-        const newX = wall.start.x + ux * clampedAlong + nx * targetPerp;
-        const newY = wall.start.y + uy * clampedAlong + ny * targetPerp;
-        // Align rotation: furniture "front" faces away from wall
-        const wallAngle = Math.atan2(wy, wx) * 180 / Math.PI;
-        // Furniture at 0° has depth along Y axis, so align perpendicular
-        const targetRotation = perp >= 0 ? wallAngle : wallAngle + 180;
-
-        bestResult = {
-          position: { x: snap(newX), y: snap(newY) },
-          rotation: ((targetRotation % 360) + 360) % 360,
-          wallId: wall.id,
-          side,
-          wallAngle: wallAngle
-        };
-      }
-    }
-    return bestResult;
+    return snapFurnitureToWallGeometry(currentFloor.walls, pos, size, snap, WALL_SNAP_DIST);
   }
 
   function snap(v: number): number {
@@ -673,7 +618,7 @@
     const cat = getCatalogItem(currentPlacingId);
     if (!cat) return;
 
-    const wallSnap = snapFurnitureToWall(mousePos, { width: cat.width, depth: cat.depth }, currentPlacingRotation);
+    const wallSnap = snapFurnitureToWall(mousePos, { width: cat.width, depth: cat.depth });
     placementWallSnap = wallSnap;
 
     const pos = wallSnap ? wallSnap.position : mousePos;
@@ -2368,7 +2313,7 @@
 
     if (tool === 'furniture' && currentPlacingId) {
       const placingCat = getCatalogItem(currentPlacingId);
-      const wallSnap = placingCat ? snapFurnitureToWall(wp, { width: placingCat.width, depth: placingCat.depth }, currentPlacingRotation) : null;
+      const wallSnap = placingCat ? snapFurnitureToWall(wp, { width: placingCat.width, depth: placingCat.depth }) : null;
       const pos = wallSnap ? wallSnap.position : { x: snap(wp.x), y: snap(wp.y) };
       const rot = wallSnap ? wallSnap.rotation : currentPlacingRotation;
       const id = addFurniture(currentPlacingId, pos);
@@ -2924,7 +2869,7 @@
       const basePos = { x: mousePos.x - dragOffset.x, y: mousePos.y - dragOffset.y };
       const fi = currentFloor?.furniture.find(f => f.id === draggingFurnitureId);
       if (fi) {
-        const wallSnap = snapFurnitureToWall(basePos, furnitureSize(fi), fi.rotation);
+        const wallSnap = snapFurnitureToWall(basePos, furnitureSize(fi));
         if (wallSnap) {
           moveFurniture(draggingFurnitureId, wallSnap.position);
           setFurnitureRotation(draggingFurnitureId, wallSnap.rotation);

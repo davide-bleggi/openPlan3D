@@ -60,6 +60,7 @@
 - [x] OrbitControls
 - [x] Shadows
 - [x] Grid helper
+- [x] Select and drag placed furniture (wall snapping, rotate with `R`, delete with `Del`)
 
 ### Properties Panel
 - [ ] Wall properties (length, thickness, color)

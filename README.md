@@ -34,6 +34,7 @@ Design floor plans in an intuitive 2D editor, then instantly preview them in a f
 
 ### 🏠 3D View
 - **Real-time 3D preview** — Toggle with `Tab`
+- **Move furniture in 3D** — Click a placed item to select it, then drag it across the floor. It snaps flush to nearby walls exactly as it does on the plan, `R` rotates it, `Del` removes it, and the properties panel edits its size, colour and angle
 - **Walkthrough mode** — First-person navigation through your floor plan
 - **Material editor** — Apply textures to walls, floors, and ceilings (wood, tile, marble, carpet, concrete, brick, and more)
 - **Lighting** — Ambient and directional lighting with adjustable intensity
