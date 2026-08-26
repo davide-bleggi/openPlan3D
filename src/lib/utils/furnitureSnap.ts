@@ -135,3 +135,19 @@ export function resolveFurnitureDrag(
     wallSnap: null
   };
 }
+
+/** cm — how far off its floor an item may be raised. */
+export const MAX_FURNITURE_ELEVATION = 1000;
+
+/** cm — the step a raised item lands on while snapping is enabled. Heights are
+ *  read in handspans, not in plan-grid squares, so this is finer than the grid. */
+export const ELEVATION_SNAP_CM = 5;
+
+/**
+ * Resolve the height of a vertical drag: quantised while snapping is on, never
+ * below the floor and never past the ceiling of the allowed range.
+ */
+export function resolveFurnitureLift(rawElevation: number, snap = true): number {
+  const stepped = snap ? Math.round(rawElevation / ELEVATION_SNAP_CM) * ELEVATION_SNAP_CM : rawElevation;
+  return Math.min(MAX_FURNITURE_ELEVATION, Math.max(0, stepped));
+}

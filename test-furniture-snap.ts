@@ -9,6 +9,9 @@
 import {
   snapFurnitureToWall,
   resolveFurnitureDrag,
+  resolveFurnitureLift,
+  ELEVATION_SNAP_CM,
+  MAX_FURNITURE_ELEVATION,
   WALL_SNAP_DIST
 } from './src/lib/utils/furnitureSnap.js';
 import type { Wall } from './src/lib/models/types.js';
@@ -134,6 +137,22 @@ console.log('\n7. The nearest wall wins');
   const snap = snapFurnitureToWall([northWall, south], { x: 200, y: 255 }, SIZE, identity);
   check('picks the wall whose flush position is closest',
     snap !== null && snap.wallId === 'south', snap ? snap.wallId : 'no snap');
+}
+
+console.log('\n8. resolveFurnitureLift — raising an item off the floor');
+{
+  check('snaps to the elevation step',
+    resolveFurnitureLift(121) === 120, `${resolveFurnitureLift(121)}`);
+  check('the step is finer than the plan grid', ELEVATION_SNAP_CM < 25);
+  check('Alt (snapping off) keeps the exact height',
+    resolveFurnitureLift(121.5, false) === 121.5, `${resolveFurnitureLift(121.5, false)}`);
+  check('never sinks below the floor',
+    resolveFurnitureLift(-40) === 0, `${resolveFurnitureLift(-40)}`);
+  check('a floor-level drag stays at zero, not at a negative step',
+    resolveFurnitureLift(-0.4) === 0, `${resolveFurnitureLift(-0.4)}`);
+  check('is capped at the top of the range',
+    resolveFurnitureLift(MAX_FURNITURE_ELEVATION + 500) === MAX_FURNITURE_ELEVATION,
+    `${resolveFurnitureLift(MAX_FURNITURE_ELEVATION + 500)}`);
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) failed.\n`);

@@ -87,6 +87,9 @@ export interface FurnitureItem {
   depth?: number;   // cm
   height?: number;  // cm
   material?: string; // material name/id
+  /** cm above the floor its base sits at — 0 rests on it. Wall units, shelves,
+   *  pendant lamps and pictures are the items this is for. */
+  elevation?: number;
   locked?: boolean;
 }
 

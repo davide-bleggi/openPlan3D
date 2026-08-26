@@ -19,11 +19,12 @@
     setFurnitureRotation,
     rotateFurniture,
     removeFurniture,
+    setFurnitureElevation,
     beginUndoGroup,
     endUndoGroup,
     snapEnabled
   } from '$lib/stores/project';
-  import { resolveFurnitureDrag } from '$lib/utils/furnitureSnap';
+  import { resolveFurnitureDrag, resolveFurnitureLift, MAX_FURNITURE_ELEVATION } from '$lib/utils/furnitureSnap';
   import { DRAG_THRESHOLD_PX } from '$lib/utils/placement';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
@@ -595,15 +596,25 @@
     id: string;
     object: THREE.Object3D;
     pointerId: number;
+    /** Which axis the gesture is on: across the floor, or straight up it. */
+    mode: 'plan' | 'lift';
     /** Offset between the grab point and the item's centre, on the drag plane. */
     offsetX: number;
     offsetZ: number;
-    /** Horizontal plane the drag runs on — the item's own elevation. */
+    /** Offset between the grab point and the item's base, while lifting. */
+    offsetY: number;
+    /** The plane the drag currently runs on — horizontal in 'plan' mode, a
+     *  camera-facing vertical one in 'lift' mode. */
     plane: THREE.Plane;
+    /** Scene y the item's own elevation is measured from, so a stacked upper
+     *  storey's floor is still "the floor" for this item. */
+    baseY: number;
     startPosition: Point;
     startRotation: number;
+    startElevation: number;
     position: Point;
     rotation: number;
+    elevation: number;
     /** Screen-space origin, so a plain click doesn't nudge the item. */
     originX: number;
     originY: number;
@@ -672,6 +683,8 @@
   }
 
   const BASEBOARD_HEIGHT = 8;
+  /** Scene y a furniture item with no elevation of its own stands at. */
+  const FURNITURE_BASE_Y = 1.5;
 
   // Create a canvas-based floor texture
   function createFloorTexture(): THREE.CanvasTexture {
@@ -1110,9 +1123,10 @@
     return null;
   }
 
-  /** Quantise a plan coordinate exactly the way the 2D canvas does. */
-  function snapCoord(v: number): number {
-    if (!get(snapEnabled)) return v;
+  /** Quantise a plan coordinate exactly the way the 2D canvas does — Alt held
+   *  down bypasses it there, and does here too. */
+  function snapCoord(v: number, free = false): number {
+    if (free || !get(snapEnabled)) return v;
     const s = get(projectSettings);
     const step = s.snapToGrid ? s.gridSize : 10;
     return Math.round(v / step) * step;
@@ -1151,6 +1165,35 @@
     refreshSelectionBox();
   }
 
+  /**
+   * Point the drag at the axis it is now on and re-anchor it, so switching
+   * between moving and lifting mid-gesture doesn't make the item jump: the
+   * grab offsets are recomputed against wherever the pointer is right now.
+   */
+  function anchorFurnitureDrag(drag: FurnitureDrag, mode: 'plan' | 'lift'): boolean {
+    const obj = drag.object;
+    if (mode === 'plan') {
+      // The horizontal plane the item already sits on, so a stacked view keeps
+      // it on its own storey instead of dropping it to y=0.
+      drag.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -obj.position.y);
+    } else {
+      // A vertical plane facing the camera through the item, so the pointer's
+      // height maps straight onto the item's.
+      const normal = camera.getWorldDirection(new THREE.Vector3());
+      normal.y = 0;
+      if (normal.lengthSq() < 1e-6) normal.set(0, 0, 1);   // looking straight down
+      normal.normalize();
+      drag.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, obj.position.clone());
+    }
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(drag.plane, hit)) return false;
+    drag.offsetX = hit.x - obj.position.x;
+    drag.offsetZ = hit.z - obj.position.z;
+    drag.offsetY = hit.y - obj.position.y;
+    drag.mode = mode;
+    return true;
+  }
+
   function beginFurnitureDrag(e: PointerEvent, id: string): boolean {
     const obj = furnitureRoots.get(id);
     const item = currentFloor?.furniture.find((f) => f.id === id);
@@ -1158,30 +1201,35 @@
     if (!obj || !item || item.locked) return false;
     setMouseFrom(e);
     raycaster.setFromCamera(mouse, camera);
-    // Drag on the horizontal plane the item already sits on, so a stacked view
-    // keeps the item on its own storey instead of dropping it to y=0.
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -obj.position.y);
-    const hit = new THREE.Vector3();
-    if (!raycaster.ray.intersectPlane(plane, hit)) return false;
-    furnitureDrag = {
+    const elevation = item.elevation ?? 0;
+    const drag: FurnitureDrag = {
       id,
       object: obj,
       pointerId: e.pointerId,
-      offsetX: hit.x - obj.position.x,
-      offsetZ: hit.z - obj.position.z,
-      plane,
+      mode: 'plan',
+      offsetX: 0,
+      offsetZ: 0,
+      offsetY: 0,
+      plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -obj.position.y),
+      // Whatever the model's y is now, this much of it is not the item's own
+      // elevation — the floor it stands on, in a stacked view.
+      baseY: obj.position.y - elevation,
       startPosition: { ...item.position },
       startRotation: item.rotation,
+      startElevation: elevation,
       position: { ...item.position },
       rotation: item.rotation,
+      elevation,
       originX: e.clientX,
       originY: e.clientY,
       moved: false
     };
+    if (!anchorFurnitureDrag(drag, e.shiftKey ? 'lift' : 'plan')) return false;
+    furnitureDrag = drag;
     // Orbit would otherwise spin the camera under the item being dragged.
     controls.enabled = false;
     try { renderer.domElement.setPointerCapture(e.pointerId); } catch {}
-    renderer.domElement.style.cursor = 'grabbing';
+    renderer.domElement.style.cursor = e.shiftKey ? 'ns-resize' : 'grabbing';
     return true;
   }
 
@@ -1200,31 +1248,46 @@
     if (!drag.moved && Math.hypot(e.clientX - drag.originX, e.clientY - drag.originY) < DRAG_THRESHOLD_PX) return;
     setMouseFrom(e);
     raycaster.setFromCamera(mouse, camera);
+
+    // Shift is held down and let go mid-drag: switch axis where it happens.
+    const wantMode: 'plan' | 'lift' = e.shiftKey ? 'lift' : 'plan';
+    if (wantMode !== drag.mode && !anchorFurnitureDrag(drag, wantMode)) return;
+    renderer.domElement.style.cursor = drag.mode === 'lift' ? 'ns-resize' : 'grabbing';
+
     const hit = new THREE.Vector3();
     if (!raycaster.ray.intersectPlane(drag.plane, hit)) return;
-
-    const resolved = resolveFurnitureDrag(
-      { x: hit.x - drag.offsetX, y: hit.z - drag.offsetZ },
-      {
-        walls: currentFloor.walls,
-        size: furnitureSize(item),
-        baseRotation: drag.startRotation,
-        snapCoord,
-        wallSnapEnabled: get(snapEnabled)
-      }
-    );
-
-    drag.position = resolved.position;
-    drag.rotation = resolved.rotation;
-    drag.moved = true;
-    drag.object.position.x = resolved.position.x;
-    drag.object.position.z = resolved.position.y;
-    drag.object.rotation.y = -(resolved.rotation * Math.PI) / 180;
-
     const units = get(projectSettings).units;
-    dragStatus = resolved.wallSnap
-      ? `Snapped to wall • ${Math.round(resolved.rotation)}°`
-      : `X ${formatLength(resolved.position.x, units)} • Y ${formatLength(resolved.position.y, units)}`;
+    drag.moved = true;
+
+    if (drag.mode === 'lift') {
+      // Straight up the wall: x and z stay where the plan put them.
+      drag.elevation = resolveFurnitureLift(hit.y - drag.offsetY - drag.baseY, get(snapEnabled) && !e.altKey);
+      drag.object.position.y = drag.baseY + drag.elevation;
+      dragStatus = drag.elevation > 0
+        ? `${formatLength(drag.elevation, units)} above the floor`
+        : 'On the floor';
+    } else {
+      const resolved = resolveFurnitureDrag(
+        { x: hit.x - drag.offsetX, y: hit.z - drag.offsetZ },
+        {
+          walls: currentFloor.walls,
+          size: furnitureSize(item),
+          baseRotation: drag.startRotation,
+          snapCoord: (v) => snapCoord(v, e.altKey),
+          wallSnapEnabled: get(snapEnabled)
+        }
+      );
+
+      drag.position = resolved.position;
+      drag.rotation = resolved.rotation;
+      drag.object.position.x = resolved.position.x;
+      drag.object.position.z = resolved.position.y;
+      drag.object.rotation.y = -(resolved.rotation * Math.PI) / 180;
+
+      dragStatus = resolved.wallSnap
+        ? `Snapped to wall • ${Math.round(resolved.rotation)}°`
+        : `X ${formatLength(resolved.position.x, units)} • Y ${formatLength(resolved.position.y, units)}`;
+    }
     refreshSelectionBox();
     markSceneDirty();
   }
@@ -1246,11 +1309,13 @@
     const unchanged =
       drag.position.x === drag.startPosition.x &&
       drag.position.y === drag.startPosition.y &&
-      drag.rotation === drag.startRotation;
+      drag.rotation === drag.startRotation &&
+      drag.elevation === drag.startElevation;
 
     if (!commit || !drag.moved || unchanged) {
       drag.object.position.x = drag.startPosition.x;
       drag.object.position.z = drag.startPosition.y;
+      drag.object.position.y = drag.baseY + drag.startElevation;
       drag.object.rotation.y = -(drag.startRotation * Math.PI) / 180;
       refreshSelectionBox();
       markSceneDirty();
@@ -1261,7 +1326,14 @@
     beginUndoGroup();
     moveFurniture(drag.id, drag.position);
     if (drag.rotation !== drag.startRotation) setFurnitureRotation(drag.id, drag.rotation);
-    endUndoGroup('Moved furniture');
+    if (drag.elevation !== drag.startElevation) setFurnitureElevation(drag.id, drag.elevation);
+    endUndoGroup(drag.elevation !== drag.startElevation && drag.mode === 'lift' ? 'Raised furniture' : 'Moved furniture');
+  }
+
+  /** Step the selected item up or down off its floor. */
+  function liftSelectedFurniture(delta: number) {
+    if (!selectedFurniture || selectedFurniture.locked) return;
+    setFurnitureElevation(selectedFurniture.id, (selectedFurniture.elevation ?? 0) + delta);
   }
 
   function rotateSelectedFurniture(delta: number) {
@@ -2153,7 +2225,7 @@
         // Re-render when GLB model finishes loading
         if (renderer && scene && camera) renderer.render(scene, camera);
       });
-      model.position.set(fi.position.x, 1.5, fi.position.y);
+      model.position.set(fi.position.x, FURNITURE_BASE_Y + (fi.elevation ?? 0), fi.position.y);
       model.rotation.y = -(fi.rotation * Math.PI) / 180;
       // Note: fi.scale is 2D editor scale — don't override 3D model scaling from scaleToFit
       if (fi.scale && (fi.scale.x !== 1 || fi.scale.y !== 1)) {
@@ -2576,6 +2648,13 @@
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault();
         deleteSelectedFurniture();
+        return;
+      }
+      // Off the floor and back down again — the axis a plan view cannot offer.
+      if (event.key === 'PageUp' || event.key === 'PageDown') {
+        event.preventDefault();
+        const step = (event.key === 'PageUp' ? 1 : -1) * (event.shiftKey ? 1 : 10);
+        liftSelectedFurniture(step);
         return;
       }
     }
@@ -3323,6 +3402,18 @@
           class="px-2 py-1 rounded text-xs bg-white/10 hover:bg-white/20 transition-colors"
           title="Rotate a quarter turn"
         >⟳ 90°</button>
+        <span class="w-px h-4 bg-white/20"></span>
+        <button
+          onclick={() => liftSelectedFurniture(10)}
+          class="px-2 py-1 rounded text-xs bg-white/10 hover:bg-white/20 transition-colors"
+          title="Raise 10 cm off the floor (PageUp, or Shift+drag)"
+        >⬆ Lift</button>
+        <button
+          onclick={() => liftSelectedFurniture(-10)}
+          class="px-2 py-1 rounded text-xs bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          disabled={(selectedFurniture.elevation ?? 0) <= 0}
+          title="Lower 10 cm (PageDown)"
+        >⬇ Lower</button>
         <button
           onclick={deleteSelectedFurniture}
           class="px-2 py-1 rounded text-xs bg-red-600/80 hover:bg-red-600 transition-colors"
@@ -3339,8 +3430,10 @@
           {dragStatus}
         {:else if selectedFurniture.locked}
           Unlock it in the properties panel to move it
+        {:else if (selectedFurniture.elevation ?? 0) > 0}
+          {formatLength(selectedFurniture.elevation ?? 0, $projectSettings.units)} above the floor • Shift+drag to change
         {:else}
-          Drag to move • R to rotate • Del to delete • size &amp; colour in the panel
+          Drag to move • Shift+drag to lift • R to rotate • Del to delete
         {/if}
       </div>
     </div>

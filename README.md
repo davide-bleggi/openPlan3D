@@ -35,6 +35,7 @@ Design floor plans in an intuitive 2D editor, then instantly preview them in a f
 ### 🏠 3D View
 - **Real-time 3D preview** — Toggle with `Tab`
 - **Move furniture in 3D** — Click a placed item to select it, then drag it across the floor. It snaps flush to nearby walls exactly as it does on the plan, `R` rotates it, `Del` removes it, and the properties panel edits its size, colour and angle
+- **Lift furniture off the floor** — `Shift`+drag raises an item straight up (or `PageUp` / `PageDown` in 10 cm steps, or the **Above floor** field in the properties panel), so wall units, shelves, pendant lamps and pictures hang where they belong
 - **Walkthrough mode** — First-person navigation through your floor plan
 - **Material editor** — Apply textures to walls, floors, and ceilings (wood, tile, marble, carpet, concrete, brick, and more)
 - **Lighting** — Ambient and directional lighting with adjustable intensity
@@ -118,6 +119,7 @@ npm run preview
 | `H` | Pan (hand) mode |
 | `I` | Hide / show the selected wall(s) |
 | `R` | Rotate selected furniture |
+| `PageUp` / `PageDown` | Raise / lower the selected furniture in the 3D view (1 cm with `Shift`) |
 | `←` `↑` `→` `↓` | Nudge the selection 1 cm (10 cm with `Shift`, 1 mm with `Alt`) |
 | `Tab` | Toggle 2D / 3D view |
 | `Delete` / `Backspace` | Delete selected element(s) |
