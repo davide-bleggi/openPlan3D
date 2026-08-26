@@ -5,6 +5,7 @@ import { assignFloorLevels, groundSlotIndex, moveFloorInStack, normalizeFloorOrd
 import { cloneFloorContents } from '$lib/utils/floorClone';
 import { applyNudge, computeNudge } from '$lib/utils/nudge';
 import { applyPaste, copySelection, pasteOffset, planPaste, type Clipboard } from '$lib/utils/clipboard';
+import { MAX_FURNITURE_ELEVATION } from '$lib/utils/furnitureSnap';
 
 
 function uid(): string {
@@ -367,6 +368,20 @@ export function scaleFurniture(id: string, scale: { x: number; y: number }) {
       fi.scale = { x: Math.max(0.2, scale.x), y: Math.max(0.2, scale.y), z: fi.scale.z };
     }
   }, undefined, coalesceKeyFor('furniture', id, { scale }));
+}
+
+/**
+ * Raise or lower an item off its floor (issue #41 follow-up). Clamped to the
+ * allowed range here so the 3D drag, the keyboard step and the properties
+ * field can none of them push an item through the floor. Coalesced for the
+ * same reason as setFurnitureRotation: one drag is one undo entry.
+ */
+export function setFurnitureElevation(id: string, elevation: number) {
+  const clamped = Math.min(MAX_FURNITURE_ELEVATION, Math.max(0, elevation));
+  mutate((f) => {
+    const item = f.furniture.find((fi) => fi.id === id);
+    if (item) item.elevation = clamped;
+  }, undefined, coalesceKeyFor('furniture', id, { elevation: clamped }));
 }
 
 export function removeFurniture(id: string) {

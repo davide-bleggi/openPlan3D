@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden, setWallRailing } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, updateEntourageItem, removeElement, elevationWallId, setWallHidden, setWallRailing, setFurnitureElevation } from '$lib/stores/project';
   import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
@@ -213,6 +213,10 @@
     const v = Math.max(1, inputToCm(Number((e.target as HTMLInputElement).value)) || 1);
     updateFurniture(selectedFurniture.id, { height: v });
   }
+  function onFurnitureElevation(e: Event) {
+    if (!selectedFurniture) return;
+    setFurnitureElevation(selectedFurniture.id, inputToCm(Number((e.target as HTMLInputElement).value)) || 0);
+  }
   function onFurnitureMaterial(e: Event) {
     if (!selectedFurniture) return;
     updateFurniture(selectedFurniture.id, { material: (e.target as HTMLSelectElement).value });
@@ -223,7 +227,7 @@
   }
   function resetFurnitureDefaults() {
     if (!selectedFurniture) return;
-    updateFurniture(selectedFurniture.id, { color: undefined, width: undefined, depth: undefined, height: undefined, material: undefined });
+    updateFurniture(selectedFurniture.id, { color: undefined, width: undefined, depth: undefined, height: undefined, material: undefined, elevation: undefined });
   }
 
   // Door distance handlers
@@ -728,6 +732,17 @@
           value={displayValue(selectedFurniture.height ?? getCatalogItem(selectedFurniture.catalogId)?.height ?? 80)} 
           oninput={onFurnitureHeight} min="1"
           class="w-full px-2 py-1 border border-gray-200 rounded text-sm" 
+        />
+      </label>
+      <!-- How far off the floor the item hangs — wall units, shelves, pendant
+           lamps. 0 rests on the floor; the 3D view shows it at that height. -->
+      <label class="block">
+        <span class="text-xs text-gray-500">Above floor ({unitLabel()})</span>
+        <input
+          type="number"
+          value={displayValue(selectedFurniture.elevation ?? 0)}
+          oninput={onFurnitureElevation} min="0"
+          class="w-full px-2 py-1 border border-gray-200 rounded text-sm"
         />
       </label>
       

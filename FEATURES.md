@@ -60,6 +60,8 @@
 - [x] OrbitControls
 - [x] Shadows
 - [x] Grid helper
+- [x] Select and drag placed furniture (wall snapping, rotate with `R`, delete with `Del`)
+- [x] Raise furniture off the floor (`Shift`+drag, `PageUp`/`PageDown`, or the "Above floor" field)
 
 ### Properties Panel
 - [ ] Wall properties (length, thickness, color)
