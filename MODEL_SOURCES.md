@@ -2,6 +2,30 @@
 
 Research date: 2026-02-13
 
+## Kenney Furniture Kit — orphan GLB triage (issue #13, 2026-09-13)
+
+An audit found 204 `.glb` files committed to `static/models/` from the Kenney
+Furniture Kit, but `MODEL_MAP` (`src/lib/utils/furnitureModelLoader.ts`)
+referenced only 94 of them — 110 files sat unused even though they were
+already downloaded and license-cleared. All 110 have now been triaged:
+
+- **188 files are wired up** to a catalog entry in `furnitureCatalog.ts`
+  (either an existing entry that previously fell back to procedural
+  geometry, or a new catalog entry added specifically to expose the model).
+- **16 files are architectural, not furniture, and are intentionally left
+  unmapped**: `wall`, `wallCorner`, `wallCornerRond`, `wallDoorway`,
+  `wallDoorwayWide`, `wallHalf`, `wallWindow`, `wallWindowSlide`, `doorway`,
+  `doorwayFront`, `doorwayOpen`, `floorCorner`, `floorCornerRound`,
+  `floorFull`, `floorHalf`, `paneling`. These are wall/floor/door building
+  pieces from the Kenney kit's architectural sub-set, not placeable
+  furniture — the floor plan editor already has its own wall/door/window
+  tools, so these would be redundant (and, for the wall segments, actively
+  confusing as furniture-palette items).
+
+This makes every `.glb` in `static/models/` accounted for: mapped, or
+explicitly excluded for the reason above. See `furnitureModelLoader.ts` for
+the current `MODEL_MAP` and `furnitureCatalog.ts` for the catalog entries.
+
 ## Missing Models Needed
 - **Outdoor Furniture:** Patio table, patio chair, umbrella, BBQ grill, park bench, sun lounger, picnic table
 - **Fencing:** Picket fence, metal fence
