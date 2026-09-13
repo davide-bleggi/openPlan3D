@@ -240,6 +240,15 @@ export function exportAsPNG(canvas: HTMLCanvasElement, project?: Project) {
 }
 
 export function exportAsJSON(project: Project) {
+  if (project.customFurniture && project.customFurniture.length > 0) {
+    const proceed = confirm(
+      `This project has ${project.customFurniture.length} imported furniture model(s). Plain JSON export does not include the model binaries — they only exist on this device, so the file won't show them if opened elsewhere.\n\nExport as .zip instead to keep the models with the project?`
+    );
+    if (proceed) {
+      import('./projectZip').then((m) => m.exportProjectAsZip(project));
+      return;
+    }
+  }
   const json = JSON.stringify(project, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   download(blob, `${project.name || 'project'}.json`);

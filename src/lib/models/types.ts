@@ -199,6 +199,26 @@ export interface CustomEntourageDef {
   aspect: number; // height / width
 }
 
+/**
+ * User-imported GLB/glTF furniture model. The binary itself lives in IndexedDB
+ * keyed by `hash` (see `$lib/services/modelStore`) — the project only carries
+ * this reference plus metadata, so localStorage/project JSON never holds the
+ * (potentially large) binary payload.
+ */
+export interface CustomFurnitureDef {
+  id: string; // catalog id used as FurnitureItem.catalogId, e.g. "custom_ab12cd34"
+  name: string;
+  hash: string; // SHA-256 of the source file — the IndexedDB key, also used for dedup/idempotent re-import
+  fileName: string; // original filename, shown in the UI and used to help match on manual re-attach
+  /** Dimensions in cm, derived from the model's bounding box — these become the catalog defaults for this def */
+  width: number;
+  depth: number;
+  height: number;
+  thumbnail: string; // small PNG data URL for the furniture palette
+  triangleCount: number;
+  fileSize: number; // bytes, of the original binary
+}
+
 export interface Floor {
   id: string;
   name: string;
@@ -228,4 +248,5 @@ export interface Project {
   createdAt: Date;
   updatedAt: Date;
   customEntourage?: CustomEntourageDef[];
+  customFurniture?: CustomFurnitureDef[];
 }

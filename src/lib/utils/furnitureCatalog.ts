@@ -1,3 +1,5 @@
+import { getCustomFurnitureDef, customDefToFurnitureDef } from './customFurnitureRegistry';
+
 export interface FurnitureDef {
   id: string;
   name: string;
@@ -334,7 +336,11 @@ export const furnitureCatalog: FurnitureDef[] = [
 ];
 
 export function getCatalogItem(id: string): FurnitureDef | undefined {
-  return furnitureCatalog.find(f => f.id === id);
+  const builtIn = furnitureCatalog.find(f => f.id === id);
+  if (builtIn) return builtIn;
+  // Not a static catalog id — check the current project's user-imported models.
+  const custom = getCustomFurnitureDef(id);
+  return custom ? customDefToFurnitureDef(custom) : undefined;
 }
 
 export const furnitureCategories = [...new Set(furnitureCatalog.map(f => f.category))];

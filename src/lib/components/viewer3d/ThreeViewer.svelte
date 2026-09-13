@@ -26,6 +26,8 @@
   } from '$lib/stores/project';
   import { resolveFurnitureDrag, resolveFurnitureLift, MAX_FURNITURE_ELEVATION } from '$lib/utils/furnitureSnap';
   import { DRAG_THRESHOLD_PX } from '$lib/utils/placement';
+  import { isCustomFurnitureId, getCustomFurnitureDef } from '$lib/utils/customFurnitureRegistry';
+  import { createCustomFurnitureModel } from '$lib/utils/customFurnitureLoader';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
@@ -1036,11 +1038,20 @@
     scene.add(wallGroup);
   }
 
+  /** Build a placed/preview furniture model — routes user-imported models to their own loader. */
+  function buildFurnitureModel(catalogId: string, def: FurnitureDef, onLoaded?: (model: THREE.Group) => void): THREE.Group {
+    if (isCustomFurnitureId(catalogId)) {
+      const customDef = getCustomFurnitureDef(catalogId)!;
+      return createCustomFurnitureModel(customDef, onLoaded);
+    }
+    return createFurnitureModelWithGLB(catalogId, def, onLoaded);
+  }
+
   function createGhostPreview(catalogId: string) {
     removeGhostPreview();
     const cat = getCatalogItem(catalogId);
     if (!cat || cat.symbol) return;
-    const model = createFurnitureModelWithGLB(catalogId, cat, () => {
+    const model = buildFurnitureModel(catalogId, cat, () => {
       if (renderer && scene && camera) renderer.render(scene, camera);
     });
     // Make semi-transparent
@@ -2221,7 +2232,7 @@
         depth: fi.depth ?? cat.depth,
         height: fi.height ?? cat.height,
       };
-      const model = createFurnitureModelWithGLB(fi.catalogId, furnitureDef, () => {
+      const model = buildFurnitureModel(fi.catalogId, furnitureDef, () => {
         // Re-render when GLB model finishes loading
         if (renderer && scene && camera) renderer.render(scene, camera);
       });

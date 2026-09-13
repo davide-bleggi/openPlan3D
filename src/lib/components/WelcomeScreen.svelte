@@ -4,6 +4,7 @@
   import { localStore } from '$lib/services/datastore';
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import { houseTemplates } from '$lib/utils/houseTemplates';
+  import { loadImportedFile } from '$lib/utils/projectFileImport';
 
   let { onDismiss }: { onDismiss: () => void } = $props();
 
@@ -53,8 +54,8 @@
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
+      const result = await loadImportedFile(file);
+      const data = result.data as any;
       // If it looks like a project, load it
       if (data.id && data.floors) {
         data.updatedAt = new Date();
@@ -65,8 +66,8 @@
       } else {
         alert('Unrecognized file format');
       }
-    } catch {
-      alert('Failed to parse file');
+    } catch (err: any) {
+      alert('Failed to parse file: ' + (err?.message ?? err));
     }
   }
 
@@ -85,7 +86,7 @@
   }
 </script>
 
-<input type="file" accept=".json" class="hidden" bind:this={fileInput} onchange={onFileSelected} />
+<input type="file" accept=".json,.zip" class="hidden" bind:this={fileInput} onchange={onFileSelected} />
 
 <!-- Backdrop -->
 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
