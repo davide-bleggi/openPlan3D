@@ -8,6 +8,7 @@
   import { getMaterial } from '$lib/utils/materials';
   import { getCatalogItem, furnitureSize } from '$lib/utils/furnitureCatalog';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
+  import { importImageFile, getImageObjectURL } from '$lib/utils/imageStore';
   import { snapFurnitureToWall as snapFurnitureToWallGeometry, WALL_SNAP_DIST, type WallSnap } from '$lib/utils/furnitureSnap';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
@@ -157,6 +158,7 @@
   let isCalibrating: boolean = $state(false);
   let calPoints: Point[] = $state([]);
   let bgImage: HTMLImageElement | null = $state(null);
+  let bgImageHash: string | null = null;
 
   // Room label drag state
   let draggingRoomLabelId: string | null = $state(null);
@@ -1892,11 +1894,18 @@
     const unsub_elevopen = elevationWallId.subscribe((id) => { elevationOpen = !!id; markDirty(); });
     const unsub_elevpick = elevationPickMode.subscribe((v) => { pickingElevation = v; markDirty(); });
     const unsub14 = activeFloor.subscribe((f) => {
-      if (f?.backgroundImage?.dataUrl && (!bgImage || bgImage.src !== f.backgroundImage.dataUrl)) {
-        const img = new Image();
-        img.onload = () => { bgImage = img; };
-        img.src = f.backgroundImage.dataUrl;
-      } else if (!f?.backgroundImage) {
+      const hash = f?.backgroundImage?.hash ?? null;
+      if (hash && hash !== bgImageHash) {
+        bgImageHash = hash;
+        getImageObjectURL(hash).then((url) => {
+          if (bgImageHash !== hash) return; // superseded by a newer background image while this was loading
+          if (!url) { bgImage = null; return; } // missing on this device — draw nothing rather than error
+          const img = new Image();
+          img.onload = () => { bgImage = img; };
+          img.src = url;
+        });
+      } else if (!hash) {
+        bgImageHash = null;
         bgImage = null;
       }
     });
@@ -1910,18 +1919,16 @@
       for (let i = 0; i < files.length; i++) {
         if (files[i].type.startsWith('image/')) {
           e.preventDefault();
-          const reader = new FileReader();
-          reader.onload = () => {
+          importImageFile(files[i]).then(({ hash }) => {
             setBackgroundImage({
-              dataUrl: reader.result as string,
+              hash,
               position: { x: camX, y: camY },
               scale: 1,
               opacity: 0.5,
               rotation: 0,
               locked: false
             });
-          };
-          reader.readAsDataURL(files[i]);
+          });
           return;
         }
       }

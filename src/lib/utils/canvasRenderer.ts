@@ -13,6 +13,7 @@ import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
 import { getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
 import { getWallTextureCanvas, getFloorTextureCanvas } from '$lib/utils/textureGenerator';
 import { getEntourageDef } from '$lib/utils/entourageCatalog';
+import { getImageObjectURL } from '$lib/utils/imageStore';
 import type { EntourageItem, CustomEntourageDef } from '$lib/models/types';
 import {
   buildStairLayout,
@@ -1772,9 +1773,16 @@ function getEntourageImage(def: CustomEntourageDef, onLoad?: () => void): HTMLIm
   let img = entourageImageCache.get(def.id);
   if (!img) {
     img = new Image();
-    img.onload = () => onLoad?.();
-    img.src = def.dataUrl;
     entourageImageCache.set(def.id, img);
+    // The bitmap lives in IndexedDB — resolve it to an object URL asynchronously.
+    // Until then the fresh <img> just stays blank; the placed symbol simply
+    // doesn't draw yet rather than erroring (and never draws at all if the
+    // blob is missing on this device).
+    getImageObjectURL(def.hash).then((url) => {
+      if (!url || !img) return;
+      img.onload = () => onLoad?.();
+      img.src = url;
+    });
   }
   return img;
 }

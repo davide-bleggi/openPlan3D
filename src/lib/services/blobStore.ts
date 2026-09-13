@@ -1,13 +1,15 @@
 /**
- * IndexedDB-backed storage for imported furniture model binaries (GLB/glTF).
+ * Generic IndexedDB-backed storage for content-addressed binary blobs —
+ * imported furniture models (GLB/glTF) and user-uploaded images (background
+ * tracing images, custom entourage symbols) alike.
  *
- * Binaries are keyed by content hash (SHA-256 of the file) so identical
- * uploads — even from different projects or devices — dedupe to a single
- * blob. Projects only ever store the hash reference; this is what keeps
- * imported geometry out of the ~5MB localStorage quota entirely.
+ * Blobs are keyed by content hash, so identical uploads — even of different
+ * kinds, even from different projects or devices — dedupe to a single
+ * stored copy. Projects only ever store the hash reference; this is what
+ * keeps large binaries out of the ~5MB localStorage quota entirely.
  */
 
-const DB_NAME = 'openplan3d-models';
+const DB_NAME = 'openplan3d-blobs';
 const DB_VERSION = 1;
 const STORE = 'blobs';
 
@@ -27,7 +29,7 @@ function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-export async function putModelBlob(hash: string, blob: Blob): Promise<void> {
+export async function putBlob(hash: string, blob: Blob): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
@@ -37,7 +39,7 @@ export async function putModelBlob(hash: string, blob: Blob): Promise<void> {
   });
 }
 
-export async function getModelBlob(hash: string): Promise<Blob | null> {
+export async function getBlob(hash: string): Promise<Blob | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly');
@@ -47,7 +49,7 @@ export async function getModelBlob(hash: string): Promise<Blob | null> {
   });
 }
 
-export async function hasModelBlob(hash: string): Promise<boolean> {
+export async function hasBlob(hash: string): Promise<boolean> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly');
@@ -57,7 +59,7 @@ export async function hasModelBlob(hash: string): Promise<boolean> {
   });
 }
 
-export async function deleteModelBlob(hash: string): Promise<void> {
+export async function deleteBlob(hash: string): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');

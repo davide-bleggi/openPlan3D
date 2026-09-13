@@ -5,7 +5,7 @@
  * of projects) before actually freeing a blob.
  */
 import { localStore } from '$lib/services/datastore';
-import { deleteModelBlob } from '$lib/services/modelStore';
+import { deleteBlob } from '$lib/services/blobStore';
 
 export async function gcModelBlobIfUnreferenced(hash: string, skipProjectId?: string): Promise<void> {
   try {
@@ -15,7 +15,7 @@ export async function gcModelBlobIfUnreferenced(hash: string, skipProjectId?: st
       const proj = await localStore.load(meta.id);
       if (proj?.customFurniture?.some((c) => c.hash === hash)) return; // still referenced elsewhere
     }
-    await deleteModelBlob(hash);
+    await deleteBlob(hash);
   } catch {
     // Best-effort cleanup — leaving an orphaned blob is harmless (just wasted IndexedDB space).
   }

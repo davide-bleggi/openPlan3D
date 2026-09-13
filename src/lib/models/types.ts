@@ -172,7 +172,8 @@ export interface GuideLine {
 }
 
 export interface BackgroundImage {
-  dataUrl: string;
+  /** Content hash of the image — the key into the shared blob store (see `$lib/services/blobStore`). */
+  hash: string;
   position: Point;
   scale: number;
   opacity: number;
@@ -195,13 +196,14 @@ export interface EntourageItem {
 export interface CustomEntourageDef {
   id: string;
   name: string;
-  dataUrl: string; // PNG as data URL
+  /** Content hash of the PNG — the key into the shared blob store (see `$lib/services/blobStore`). */
+  hash: string;
   aspect: number; // height / width
 }
 
 /**
  * User-imported GLB/glTF furniture model. The binary itself lives in IndexedDB
- * keyed by `hash` (see `$lib/services/modelStore`) — the project only carries
+ * keyed by `hash` (see `$lib/services/blobStore`) — the project only carries
  * this reference plus metadata, so localStorage/project JSON never holds the
  * (potentially large) binary payload.
  */

@@ -532,13 +532,13 @@ export function updateEntourageItem(id: string, updates: Partial<EntourageItem>)
 }
 
 /** Register an uploaded PNG as a reusable project-level entourage symbol. */
-export function addCustomEntourage(name: string, dataUrl: string, aspect: number): string {
+export function addCustomEntourage(name: string, hash: string, aspect: number): string {
   const p = get(currentProject);
   if (!p) return '';
   snapshot('Added custom entourage');
   if (!p.customEntourage) p.customEntourage = [];
   const id = uid();
-  p.customEntourage.push({ id, name, dataUrl, aspect });
+  p.customEntourage.push({ id, name, hash, aspect });
   p.updatedAt = new Date();
   currentProject.set({ ...p });
   return id;

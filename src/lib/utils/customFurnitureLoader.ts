@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { parseGLTF } from './customGLTFLoader';
 import { stripNonMeshNodes } from './glbSanitize';
-import { getModelBlob, hasModelBlob } from '$lib/services/modelStore';
+import { getBlob, hasBlob } from '$lib/services/blobStore';
 import type { CustomFurnitureDef } from '$lib/models/types';
 
 const parsedCache = new Map<string, THREE.Group>();
@@ -24,7 +24,7 @@ async function loadCustomModel(hash: string): Promise<THREE.Group | null> {
   }
 
   const promise = (async () => {
-    const blob = await getModelBlob(hash);
+    const blob = await getBlob(hash);
     if (!blob) return null;
     try {
       const buffer = await blob.arrayBuffer();
@@ -137,5 +137,5 @@ export function createCustomFurnitureModel(def: CustomFurnitureDef, onLoaded?: (
 
 /** Whether a def's binary is missing from this device's IndexedDB (used to badge the palette/library UI). */
 export async function isModelMissing(def: CustomFurnitureDef): Promise<boolean> {
-  return !(await hasModelBlob(def.hash));
+  return !(await hasBlob(def.hash));
 }

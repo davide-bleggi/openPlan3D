@@ -3,6 +3,7 @@
   import type { Tool } from '$lib/stores/project';
   import type { Door, Window as Win, CustomEntourageDef, CustomFurnitureDef } from '$lib/models/types';
   import { importCustomFurniture } from '$lib/utils/customFurnitureImport';
+  import { importImageFile, getImageObjectURL } from '$lib/utils/imageStore';
   import { isModelMissing } from '$lib/utils/customFurnitureLoader';
   import { gcModelBlobIfUnreferenced } from '$lib/utils/customFurnitureGC';
   import { entourageCatalog, entourageCategories } from '$lib/utils/entourageCatalog';
@@ -187,6 +188,18 @@
   let customEntDefs = $state<CustomEntourageDef[]>([]);
   currentProject.subscribe(p => { customEntDefs = p?.customEntourage ?? []; });
   let entourageFileInput = $state<HTMLInputElement | null>(null);
+  let entourageImageUrls = $state<Record<string, string>>({});
+
+  // Custom entourage symbols only carry a content hash — resolve each to a
+  // displayable object URL for the palette (a no-op once already resolved).
+  $effect(() => {
+    for (const def of customEntDefs) {
+      if (entourageImageUrls[def.hash]) continue;
+      getImageObjectURL(def.hash).then((url) => {
+        if (url) entourageImageUrls = { ...entourageImageUrls, [def.hash]: url };
+      });
+    }
+  });
 
   function armEntourage(id: string) {
     const arm = placingEntId !== id;
@@ -195,25 +208,26 @@
     placingEntourageId.set(arm ? id : null);
   }
 
-  function onEntourageUpload(e: Event) {
+  async function onEntourageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { alert('Image too large (max 2 MB)'); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const img = new Image();
-      img.onload = () => {
-        const aspect = img.naturalHeight / img.naturalWidth || 1;
-        const id = addCustomEntourage(file.name.replace(/\.[^.]+$/, ''), dataUrl, aspect);
-        clearPlacementModes();
-        placingEntourageId.set(id);
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { hash } = await importImageFile(file);
+      const url = await getImageObjectURL(hash);
+      const aspect = await new Promise<number>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img.naturalHeight / img.naturalWidth || 1);
+        img.onerror = () => resolve(1);
+        img.src = url!;
+      });
+      const id = addCustomEntourage(file.name.replace(/\.[^.]+$/, ''), hash, aspect);
+      clearPlacementModes();
+      placingEntourageId.set(id);
+    } catch (err: any) {
+      alert('Failed to import image: ' + (err?.message ?? err));
+    }
   }
 
   // Custom (user-imported GLB/glTF) furniture models
@@ -314,22 +328,19 @@
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Warning: Image is larger than 5MB. This may slow down the application.');
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
+      try {
+        const { hash } = await importImageFile(file);
         setBackgroundImage({
-          dataUrl,
+          hash,
           position: { x: 0, y: 0 },
           scale: 1,
           opacity: 0.4,
           rotation: 0,
           locked: false,
         });
-      };
-      reader.readAsDataURL(file);
+      } catch (err: any) {
+        alert('Failed to import image: ' + (err?.message ?? err));
+      }
     };
     input.click();
   }
@@ -976,7 +987,11 @@
                     title={def.name}
                     onclick={() => armEntourage(def.id)}
                   >
-                    <img src={def.dataUrl} alt={def.name} class="w-full h-8 object-contain" />
+                    {#if entourageImageUrls[def.hash]}
+                      <img src={entourageImageUrls[def.hash]} alt={def.name} class="w-full h-8 object-contain" />
+                    {:else}
+                      <div class="w-full h-8 flex items-center justify-center text-gray-300 text-lg">🖼️</div>
+                    {/if}
                     <span class="text-[9px] text-gray-500 leading-tight block truncate">{def.name}</span>
                   </button>
                 {/each}

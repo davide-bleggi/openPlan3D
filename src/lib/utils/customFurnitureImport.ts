@@ -14,7 +14,7 @@ import { parseGLTF } from './customGLTFLoader';
 import { sha256Hex } from './hash';
 import { stripNonMeshNodes, countTriangles } from './glbSanitize';
 import { renderThumbnailForObject } from './furnitureThumbnails';
-import { putModelBlob, hasModelBlob } from '$lib/services/modelStore';
+import { putBlob, hasBlob } from '$lib/services/blobStore';
 import { currentProject, addCustomFurnitureDef } from '$lib/stores/project';
 import type { CustomFurnitureDef } from '$lib/models/types';
 
@@ -91,9 +91,9 @@ export async function processModelFile(file: File): Promise<ProcessedModel> {
 
   const thumbnail = renderThumbnailForObject(scene) ?? '';
 
-  const alreadyStored = await hasModelBlob(hash);
+  const alreadyStored = await hasBlob(hash);
   if (!alreadyStored) {
-    await putModelBlob(hash, new Blob([buffer], { type: file.type || 'model/gltf-binary' }));
+    await putBlob(hash, new Blob([buffer], { type: file.type || 'model/gltf-binary' }));
   }
 
   return { hash, width, depth, height, triangleCount, fileSize: file.size, thumbnail, warnings };

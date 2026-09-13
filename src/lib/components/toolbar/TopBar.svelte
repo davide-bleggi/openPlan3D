@@ -317,8 +317,11 @@
           if (data.createdAt) data.createdAt = new Date(data.createdAt);
           if (data.updatedAt) data.updatedAt = new Date(data.updatedAt);
           loadProject(data as Project);
-          if (result.kind === 'project' && result.restoredModels > 0) {
-            alert(`Restored ${result.restoredModels} imported furniture model(s) from the bundle.`);
+          if (result.kind === 'project' && (result.restoredModels > 0 || result.restoredImages > 0)) {
+            const parts = [];
+            if (result.restoredModels > 0) parts.push(`${result.restoredModels} furniture model(s)`);
+            if (result.restoredImages > 0) parts.push(`${result.restoredImages} image(s)`);
+            alert(`Restored ${parts.join(' and ')} from the bundle.`);
           }
         } else {
           alert('Unrecognized file format. Expected a project file or Apple RoomPlan JSON.');
