@@ -9,6 +9,8 @@
   import { exportAsPNG, exportAsJSON, exportAsSVG, exportPDF } from '$lib/utils/export';
   import { exportDXF, exportDWG } from '$lib/utils/cadExport';
   import { importRoomPlan } from '$lib/utils/roomplanImport';
+  import { loadImportedFile } from '$lib/utils/projectFileImport';
+  import { exportProjectAsZip } from '$lib/utils/projectZip';
   import SettingsDialog from './SettingsDialog.svelte';
   import FloorsMenu from './FloorsMenu.svelte';
   import AddFloorDialog from './AddFloorDialog.svelte';
@@ -196,6 +198,12 @@
     exportOpen = false;
   }
 
+  function onExportZIP() {
+    const p = get(currentProject);
+    if (p) exportProjectAsZip(p);
+    exportOpen = false;
+  }
+
   function onExportSVG() {
     const p = get(currentProject);
     if (p) exportAsSVG(p);
@@ -283,14 +291,14 @@
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        // Detect RoomPlan format (has walls array with dimensions, or rooms/doors/windows at top level)
-        if (data.walls && Array.isArray(data.walls) && data.walls[0]?.dimensions) {
-          // RoomPlan JSON — import into current project
-          const floor = importRoomPlan(data, { straighten: true, orthogonal: true });
+        const result = await loadImportedFile(file);
+        if (result.kind === 'roomplan') {
+          const floor = importRoomPlan(result.data as any, { straighten: true, orthogonal: true });
           importFloorIntoCurrentProject(floor);
-        } else if (data.floors && data.id) {
+          return;
+        }
+        const data = result.data as any;
+        if (data.floors && data.id) {
           // Validate project structure
           if (!Array.isArray(data.floors) || data.floors.length === 0) {
             alert('Invalid project file: "floors" must be a non-empty array.');
@@ -309,6 +317,12 @@
           if (data.createdAt) data.createdAt = new Date(data.createdAt);
           if (data.updatedAt) data.updatedAt = new Date(data.updatedAt);
           loadProject(data as Project);
+          if (result.kind === 'project' && (result.restoredModels > 0 || result.restoredImages > 0)) {
+            const parts = [];
+            if (result.restoredModels > 0) parts.push(`${result.restoredModels} furniture model(s)`);
+            if (result.restoredImages > 0) parts.push(`${result.restoredImages} image(s)`);
+            alert(`Restored ${parts.join(' and ')} from the bundle.`);
+          }
         } else {
           alert('Unrecognized file format. Expected a project file or Apple RoomPlan JSON.');
         }
@@ -560,6 +574,10 @@
         <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left flex items-center gap-2" onclick={onExportJSON}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
           Download JSON
+        </button>
+        <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left flex items-center gap-2" onclick={onExportZIP} title="Includes imported furniture models — use this to open the project on another device">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+          Download ZIP (with models)
         </button>
         <div class="h-px bg-gray-100 my-1"></div>
         <button class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left flex items-center gap-2" onclick={onImportJSON}>

@@ -1,7 +1,11 @@
 <script lang="ts">
-  import { selectedTool, setActiveTool, clearPlacementModes, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY, placingEntourageId, addCustomEntourage } from '$lib/stores/project';
+  import { selectedTool, setActiveTool, clearPlacementModes, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY, placingEntourageId, addCustomEntourage, removeCustomFurnitureDef, touchProject } from '$lib/stores/project';
   import type { Tool } from '$lib/stores/project';
-  import type { Door, Window as Win, CustomEntourageDef } from '$lib/models/types';
+  import type { Door, Window as Win, CustomEntourageDef, CustomFurnitureDef } from '$lib/models/types';
+  import { importCustomFurniture } from '$lib/utils/customFurnitureImport';
+  import { importImageFile, getImageObjectURL } from '$lib/utils/imageStore';
+  import { isModelMissing } from '$lib/utils/customFurnitureLoader';
+  import { gcModelBlobIfUnreferenced } from '$lib/utils/customFurnitureGC';
   import { entourageCatalog, entourageCategories } from '$lib/utils/entourageCatalog';
   import { roomPresets, placePreset } from '$lib/utils/roomPresets';
   import { roomTemplates, placeRoomTemplate } from '$lib/utils/roomTemplates';
@@ -9,6 +13,7 @@
   import type { FurnitureDef } from '$lib/utils/furnitureCatalog';
   import { getModelFile, generateThumbnail, getThumbnail, preloadThumbnails } from '$lib/utils/furnitureThumbnails';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { createProjectFromRoomPlan, extractRoomJsonFromZip, ORTHO_VERSION } from '$lib/utils/roomplanImport';
   import { currentProject, loadProject } from '$lib/stores/project';
 
@@ -183,6 +188,18 @@
   let customEntDefs = $state<CustomEntourageDef[]>([]);
   currentProject.subscribe(p => { customEntDefs = p?.customEntourage ?? []; });
   let entourageFileInput = $state<HTMLInputElement | null>(null);
+  let entourageImageUrls = $state<Record<string, string>>({});
+
+  // Custom entourage symbols only carry a content hash — resolve each to a
+  // displayable object URL for the palette (a no-op once already resolved).
+  $effect(() => {
+    for (const def of customEntDefs) {
+      if (entourageImageUrls[def.hash]) continue;
+      getImageObjectURL(def.hash).then((url) => {
+        if (url) entourageImageUrls = { ...entourageImageUrls, [def.hash]: url };
+      });
+    }
+  });
 
   function armEntourage(id: string) {
     const arm = placingEntId !== id;
@@ -191,25 +208,91 @@
     placingEntourageId.set(arm ? id : null);
   }
 
-  function onEntourageUpload(e: Event) {
+  async function onEntourageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { alert('Image too large (max 2 MB)'); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const img = new Image();
-      img.onload = () => {
-        const aspect = img.naturalHeight / img.naturalWidth || 1;
-        const id = addCustomEntourage(file.name.replace(/\.[^.]+$/, ''), dataUrl, aspect);
-        clearPlacementModes();
-        placingEntourageId.set(id);
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { hash } = await importImageFile(file);
+      const url = await getImageObjectURL(hash);
+      const aspect = await new Promise<number>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img.naturalHeight / img.naturalWidth || 1);
+        img.onerror = () => resolve(1);
+        img.src = url!;
+      });
+      const id = addCustomEntourage(file.name.replace(/\.[^.]+$/, ''), hash, aspect);
+      clearPlacementModes();
+      placingEntourageId.set(id);
+    } catch (err: any) {
+      alert('Failed to import image: ' + (err?.message ?? err));
+    }
+  }
+
+  // Custom (user-imported GLB/glTF) furniture models
+  let customFurnitureDefs = $state<CustomFurnitureDef[]>([]);
+  currentProject.subscribe(p => { customFurnitureDefs = p?.customFurniture ?? []; });
+  let missingModelIds = $state<Set<string>>(new Set());
+  let modelFileInput = $state<HTMLInputElement | null>(null);
+  let importingModel = $state(false);
+
+  // Re-check which custom defs are missing their IndexedDB blob whenever the list changes
+  // (project load, import, delete) so the palette can badge them. Blob-only changes (e.g.
+  // re-attaching a missing model without creating a new def) don't touch the project store,
+  // so `refreshMissingModelIds()` is also called explicitly after those.
+  async function refreshMissingModelIds() {
+    const missing = new Set<string>();
+    for (const def of customFurnitureDefs) {
+      if (await isModelMissing(def)) missing.add(def.id);
+    }
+    missingModelIds = missing;
+  }
+
+  $effect(() => {
+    customFurnitureDefs;
+    refreshMissingModelIds();
+  });
+
+  function onCustomFurnitureClick(def: CustomFurnitureDef) {
+    clearPlacementModes();
+    selectedTool.set('furniture');
+    placingFurnitureId.set(def.id);
+  }
+
+  async function onModelFileSelected(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    importingModel = true;
+    try {
+      const outcome = await importCustomFurniture(file);
+      if (outcome.warnings.length) alert(outcome.warnings.join('\n'));
+      if (!outcome.created) {
+        alert(`"${outcome.def.name}" was already in this project — matched by content, and its model has been restored if it was missing.`);
+        await refreshMissingModelIds();
+        touchProject(); // placed items using this def need to re-render now that the blob is back
+      }
+      clearPlacementModes();
+      placingFurnitureId.set(outcome.id);
+      selectedTool.set('furniture');
+    } catch (err: any) {
+      alert('Failed to import model: ' + (err?.message ?? err));
+    } finally {
+      importingModel = false;
+    }
+  }
+
+  async function onDeleteCustomFurniture(def: CustomFurnitureDef) {
+    if (!confirm(`Remove "${def.name}" from this project's furniture library? This won't work while any placed item still uses it.`)) return;
+    const currentId = get(currentProject)?.id;
+    const result = removeCustomFurnitureDef(def.id);
+    if (!result.removed) {
+      if (result.reason === 'in-use') alert('Delete the placed item(s) using this model first.');
+      return;
+    }
+    if (result.hash) gcModelBlobIfUnreferenced(result.hash, currentId);
   }
 
   let isPlacingColumn = $state(false);
@@ -245,22 +328,19 @@
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Warning: Image is larger than 5MB. This may slow down the application.');
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
+      try {
+        const { hash } = await importImageFile(file);
         setBackgroundImage({
-          dataUrl,
+          hash,
           position: { x: 0, y: 0 },
           scale: 1,
           opacity: 0.4,
           rotation: 0,
           locked: false,
         });
-      };
-      reader.readAsDataURL(file);
+      } catch (err: any) {
+        alert('Failed to import image: ' + (err?.message ?? err));
+      }
     };
     input.click();
   }
@@ -830,6 +910,50 @@
           {/each}
         </div>
 
+        <!-- My Models: user-imported GLB/glTF furniture -->
+        <div class="pt-3 mt-2 border-t border-gray-100">
+          <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">My Models</h3>
+          {#if customFurnitureDefs.length}
+            <div class="grid grid-cols-2 gap-2 mb-2">
+              {#each customFurnitureDefs as def}
+                <button
+                  class="relative flex flex-col items-center gap-1 p-3 rounded-lg border-2 transition-colors cursor-grab active:cursor-grabbing {currentPlacing === def.id ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300' : 'border-gray-100 hover:border-blue-300 hover:bg-blue-50'}"
+                  onclick={() => onCustomFurnitureClick(def)}
+                  draggable="true"
+                  ondragstart={(e) => { e.dataTransfer?.setData('application/o3d-type', 'furniture'); e.dataTransfer?.setData('application/o3d-id', def.id); }}
+                  title={missingModelIds.has(def.id) ? `"${def.fileName}" — model file missing, re-upload it below to restore` : `${def.name} (${def.width}×${def.depth}×${def.height}cm)`}
+                >
+                  <!-- svelte-ignore node_invalid_placement -->
+                  <span
+                    role="button"
+                    tabindex="0"
+                    class="absolute top-1 right-1 text-[11px] leading-none cursor-pointer text-gray-300 hover:text-red-500"
+                    onclick={(e: MouseEvent) => { e.stopPropagation(); e.preventDefault(); onDeleteCustomFurniture(def); }}
+                    onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') { e.stopPropagation(); onDeleteCustomFurniture(def); } }}
+                    title="Remove from library"
+                  >✕</span>
+                  {#if def.thumbnail}
+                    <img src={def.thumbnail} alt={def.name} class="w-12 h-12 object-contain {missingModelIds.has(def.id) ? 'opacity-40 grayscale' : ''}" />
+                  {:else}
+                    <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-gray-100 text-lg">📦</div>
+                  {/if}
+                  <span class="text-xs font-medium text-gray-600 truncate max-w-full">{def.name}</span>
+                  <span class="text-[10px] text-gray-400">{def.width}×{def.depth}cm</span>
+                  {#if missingModelIds.has(def.id)}
+                    <span class="absolute bottom-1 left-1 right-1 text-[9px] text-center text-amber-700 bg-amber-100 rounded px-1 leading-tight">⚠ missing — re-upload</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+          <button
+            class="w-full py-1.5 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600 transition-colors disabled:opacity-50"
+            onclick={() => modelFileInput?.click()}
+            disabled={importingModel}
+          >{importingModel ? 'Importing…' : '+ Import 3D Model (.glb/.gltf)'}</button>
+          <input type="file" accept=".glb,.gltf" class="hidden" bind:this={modelFileInput} onchange={onModelFileSelected} />
+        </div>
+
         <!-- Entourage: 2D presentation symbols (people, cars, planting) -->
         <div class="pt-3 mt-2 border-t border-gray-100">
           <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">Entourage</h3>
@@ -863,7 +987,11 @@
                     title={def.name}
                     onclick={() => armEntourage(def.id)}
                   >
-                    <img src={def.dataUrl} alt={def.name} class="w-full h-8 object-contain" />
+                    {#if entourageImageUrls[def.hash]}
+                      <img src={entourageImageUrls[def.hash]} alt={def.name} class="w-full h-8 object-contain" />
+                    {:else}
+                      <div class="w-full h-8 flex items-center justify-center text-gray-300 text-lg">🖼️</div>
+                    {/if}
                     <span class="text-[9px] text-gray-500 leading-tight block truncate">{def.name}</span>
                   </button>
                 {/each}

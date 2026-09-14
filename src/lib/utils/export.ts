@@ -240,6 +240,20 @@ export function exportAsPNG(canvas: HTMLCanvasElement, project?: Project) {
 }
 
 export function exportAsJSON(project: Project) {
+  const modelCount = project.customFurniture?.length ?? 0;
+  const imageCount = (project.customEntourage?.length ?? 0) + project.floors.filter(f => f.backgroundImage).length;
+  if (modelCount > 0 || imageCount > 0) {
+    const parts = [];
+    if (modelCount > 0) parts.push(`${modelCount} imported furniture model(s)`);
+    if (imageCount > 0) parts.push(`${imageCount} image(s) (background/entourage)`);
+    const proceed = confirm(
+      `This project has ${parts.join(' and ')}. Plain JSON export does not include their binaries — they only exist on this device, so the file won't show them if opened elsewhere.\n\nExport as .zip instead to keep them with the project?`
+    );
+    if (proceed) {
+      import('./projectZip').then((m) => m.exportProjectAsZip(project));
+      return;
+    }
+  }
   const json = JSON.stringify(project, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   download(blob, `${project.name || 'project'}.json`);

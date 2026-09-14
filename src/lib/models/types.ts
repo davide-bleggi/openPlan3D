@@ -172,7 +172,8 @@ export interface GuideLine {
 }
 
 export interface BackgroundImage {
-  dataUrl: string;
+  /** Content hash of the image — the key into the shared blob store (see `$lib/services/blobStore`). */
+  hash: string;
   position: Point;
   scale: number;
   opacity: number;
@@ -195,8 +196,29 @@ export interface EntourageItem {
 export interface CustomEntourageDef {
   id: string;
   name: string;
-  dataUrl: string; // PNG as data URL
+  /** Content hash of the PNG — the key into the shared blob store (see `$lib/services/blobStore`). */
+  hash: string;
   aspect: number; // height / width
+}
+
+/**
+ * User-imported GLB/glTF furniture model. The binary itself lives in IndexedDB
+ * keyed by `hash` (see `$lib/services/blobStore`) — the project only carries
+ * this reference plus metadata, so localStorage/project JSON never holds the
+ * (potentially large) binary payload.
+ */
+export interface CustomFurnitureDef {
+  id: string; // catalog id used as FurnitureItem.catalogId, e.g. "custom_ab12cd34"
+  name: string;
+  hash: string; // SHA-256 of the source file — the IndexedDB key, also used for dedup/idempotent re-import
+  fileName: string; // original filename, shown in the UI and used to help match on manual re-attach
+  /** Dimensions in cm, derived from the model's bounding box — these become the catalog defaults for this def */
+  width: number;
+  depth: number;
+  height: number;
+  thumbnail: string; // small PNG data URL for the furniture palette
+  triangleCount: number;
+  fileSize: number; // bytes, of the original binary
 }
 
 export interface Floor {
@@ -228,4 +250,5 @@ export interface Project {
   createdAt: Date;
   updatedAt: Date;
   customEntourage?: CustomEntourageDef[];
+  customFurniture?: CustomFurnitureDef[];
 }

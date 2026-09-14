@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup, EntourageItem } from '$lib/models/types';
+import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup, EntourageItem, CustomFurnitureDef } from '$lib/models/types';
 import { floorNameForLevel } from '$lib/utils/floorStacking';
 import { assignFloorLevels, groundSlotIndex, moveFloorInStack, normalizeFloorOrder, orderFloorsBottomUp, reorderFloorStack } from '$lib/utils/floorOrder';
 import { cloneFloorContents } from '$lib/utils/floorClone';
@@ -532,16 +532,69 @@ export function updateEntourageItem(id: string, updates: Partial<EntourageItem>)
 }
 
 /** Register an uploaded PNG as a reusable project-level entourage symbol. */
-export function addCustomEntourage(name: string, dataUrl: string, aspect: number): string {
+export function addCustomEntourage(name: string, hash: string, aspect: number): string {
   const p = get(currentProject);
   if (!p) return '';
   snapshot('Added custom entourage');
   if (!p.customEntourage) p.customEntourage = [];
   const id = uid();
-  p.customEntourage.push({ id, name, dataUrl, aspect });
+  p.customEntourage.push({ id, name, hash, aspect });
   p.updatedAt = new Date();
   currentProject.set({ ...p });
   return id;
+}
+
+/**
+ * Register an imported GLB/glTF as a reusable project-level furniture def.
+ * The binary itself is not passed here — it's already in IndexedDB by the
+ * time this is called (see `$lib/utils/customFurnitureImport`); this just
+ * records the reference + derived metadata on the project.
+ */
+export function addCustomFurnitureDef(
+  name: string,
+  fileName: string,
+  meta: { hash: string; width: number; depth: number; height: number; thumbnail: string; triangleCount: number; fileSize: number }
+): { id: string; def: CustomFurnitureDef } {
+  const p = get(currentProject);
+  if (!p) throw new Error('No active project');
+  snapshot('Imported furniture model');
+  if (!p.customFurniture) p.customFurniture = [];
+  const id = `custom_${uid()}`;
+  const def: CustomFurnitureDef = { id, name, fileName, ...meta };
+  p.customFurniture.push(def);
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+  return { id, def };
+}
+
+/**
+ * Remove an imported furniture def. Refuses while any placed item still
+ * references it (delete the items first). Returns the def's content hash so
+ * the caller can garbage-collect the IndexedDB blob if no other project
+ * references it — see `$lib/utils/customFurnitureGC`.
+ */
+export function removeCustomFurnitureDef(id: string): { removed: boolean; reason?: 'in-use' | 'not-found'; hash?: string } {
+  const p = get(currentProject);
+  if (!p) return { removed: false, reason: 'not-found' };
+  const def = p.customFurniture?.find((c) => c.id === id);
+  if (!def) return { removed: false, reason: 'not-found' };
+  const inUse = p.floors.some((f) => f.furniture.some((fi) => fi.catalogId === id));
+  if (inUse) return { removed: false, reason: 'in-use' };
+  snapshot('Removed imported furniture model');
+  p.customFurniture = (p.customFurniture ?? []).filter((c) => c.id !== id);
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+  return { removed: true, hash: def.hash };
+}
+
+/**
+ * Force every subscriber (2D/3D renderers, panels) to re-render without
+ * creating an undo entry. Used after a change that isn't part of the project
+ * document itself — e.g. a missing model's IndexedDB blob being restored by
+ * re-upload, which placed furniture needs to pick up immediately.
+ */
+export function touchProject() {
+  currentProject.update((p) => (p ? { ...p } : p));
 }
 
 /** Scale calibration mode */

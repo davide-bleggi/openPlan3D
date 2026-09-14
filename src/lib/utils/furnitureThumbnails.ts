@@ -57,57 +57,71 @@ export function getThumbnail(file: string): string | null {
   return cache.get(file) ?? null;
 }
 
+/**
+ * Render an arbitrary model to a data URL using the shared offscreen renderer.
+ * Used both for catalog GLBs (by file name, cached — see `generateThumbnail`)
+ * and for one-off user-imported models (by parsed scene, not cached here).
+ */
+export function renderThumbnailForObject(model: THREE.Object3D): string | null {
+  try {
+    ensureRenderer();
+
+    // Clear scene of previous models (keep lights)
+    const toRemove: THREE.Object3D[] = [];
+    scene!.children.forEach(c => { if (!(c instanceof THREE.Light)) toRemove.push(c); });
+    toRemove.forEach(c => scene!.remove(c));
+
+    scene!.add(model);
+
+    // Fit camera to model
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (maxDim === 0) { scene!.remove(model); return null; }
+
+    const pad = 1.3;
+    const half = (maxDim * pad) / 2;
+    camera!.left = -half;
+    camera!.right = half;
+    camera!.top = half;
+    camera!.bottom = -half;
+    camera!.near = 0.01;
+    camera!.far = maxDim * 10;
+
+    // Isometric-ish angle
+    const dist = maxDim * 2;
+    camera!.position.set(
+      center.x + dist * 0.7,
+      center.y + dist * 0.8,
+      center.z + dist * 0.7
+    );
+    camera!.lookAt(center);
+    camera!.updateProjectionMatrix();
+
+    renderer!.render(scene!, camera!);
+    const dataUrl = renderer!.domElement.toDataURL('image/png');
+
+    scene!.remove(model);
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateThumbnail(file: string): Promise<string | null> {
   if (cache.has(file)) return cache.get(file)!;
   if (pending.has(file)) return pending.get(file)!;
 
   const promise = (async () => {
     try {
-      ensureRenderer();
       const model = await loadModel(file);
-
-      // Clear scene of previous models (keep lights)
-      const toRemove: THREE.Object3D[] = [];
-      scene!.children.forEach(c => { if (!(c instanceof THREE.Light)) toRemove.push(c); });
-      toRemove.forEach(c => scene!.remove(c));
-
-      scene!.add(model);
-
-      // Fit camera to model
-      const box = new THREE.Box3().setFromObject(model);
-      const size = new THREE.Vector3();
-      const center = new THREE.Vector3();
-      box.getSize(size);
-      box.getCenter(center);
-
-      const maxDim = Math.max(size.x, size.y, size.z);
-      if (maxDim === 0) return null;
-
-      const pad = 1.3;
-      const half = (maxDim * pad) / 2;
-      camera!.left = -half;
-      camera!.right = half;
-      camera!.top = half;
-      camera!.bottom = -half;
-      camera!.near = 0.01;
-      camera!.far = maxDim * 10;
-
-      // Isometric-ish angle
-      const dist = maxDim * 2;
-      camera!.position.set(
-        center.x + dist * 0.7,
-        center.y + dist * 0.8,
-        center.z + dist * 0.7
-      );
-      camera!.lookAt(center);
-      camera!.updateProjectionMatrix();
-
-      renderer!.render(scene!, camera!);
-      const dataUrl = renderer!.domElement.toDataURL('image/png');
-
-      scene!.remove(model);
-      cache.set(file, dataUrl);
+      const dataUrl = renderThumbnailForObject(model);
       pending.delete(file);
+      if (dataUrl) cache.set(file, dataUrl);
       return dataUrl;
     } catch {
       pending.delete(file);

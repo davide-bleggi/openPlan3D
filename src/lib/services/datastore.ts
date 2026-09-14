@@ -1,4 +1,5 @@
 import type { Project } from '$lib/models/types';
+import { migrateProjectImages } from '$lib/utils/projectImageMigration';
 
 export interface DataStore {
   save(project: Project): Promise<void>;
@@ -59,6 +60,13 @@ export const localStore: DataStore = {
       if (!floor.furniture) floor.furniture = [];
       if (!floor.stairs) floor.stairs = [];
       if (!floor.columns) floor.columns = [];
+    }
+    // Move any still-inline background/entourage images (pre-IndexedDB projects) into
+    // the blob store, then persist the now much smaller project right away — this is
+    // what actually relieves the quota pressure rather than just deferring it to the
+    // next edit.
+    if (await migrateProjectImages(p as Project)) {
+      await this.save(p as Project);
     }
     return p as Project;
   },
