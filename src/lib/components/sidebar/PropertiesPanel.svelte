@@ -981,6 +981,15 @@
           <button onclick={() => updateStair(selectedStair!.id, { direction: 'down' })} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {selectedStair.direction === 'down' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">Down ↓</button>
         </div>
       </label>
+      {#if selectedStair.stairType === 'l-shaped' || selectedStair.stairType === 'u-shaped'}
+        <label class="block">
+          <span class="text-xs text-gray-500">Mirror</span>
+          <div class="flex gap-2">
+            <button onclick={() => updateStair(selectedStair!.id, { mirrored: false })} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {!selectedStair.mirrored ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">Off</button>
+            <button onclick={() => updateStair(selectedStair!.id, { mirrored: true })} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {selectedStair.mirrored ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">On</button>
+          </div>
+        </label>
+      {/if}
       <label class="block">
         <span class="text-xs text-gray-500">Rotation (degrees)</span>
         <input type="number" value={selectedStair.rotation} oninput={(e) => updateStair(selectedStair!.id, { rotation: Number((e.target as HTMLInputElement).value) })} class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
