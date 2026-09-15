@@ -199,6 +199,42 @@ for (const type of types) {
   check(`${type}: landings identical up/down`, JSON.stringify(up.landings) === JSON.stringify(down.landings));
 }
 
+// `mirrored` flips which side an l-shaped/u-shaped stair's turn lands on,
+// without changing the footprint, riser counts or which flight is longer.
+console.log('=== mirrored handling ===');
+for (const type of types) {
+  const plain = buildStairLayout(makeStair({ stairType: type })) as StairLayout;
+  const mirrored = buildStairLayout(makeStair({ stairType: type, mirrored: true })) as StairLayout;
+
+  check(`${type}: footprint unchanged when mirrored`,
+    JSON.stringify(plain.footprint) === JSON.stringify(mirrored.footprint));
+  check(`${type}: riser counts unchanged when mirrored`,
+    JSON.stringify(plain.flights.map((f) => f.riserCount)) === JSON.stringify(mirrored.flights.map((f) => f.riserCount)));
+
+  // Reflecting every rect back across x = 0 must exactly undo the mirror.
+  const reflectX = <T extends StairRect>(r: T): T => ({ ...r, x: -(r.x + r.w) });
+  const unmirroredFlights = mirrored.flights.map((f) => ({
+    ...reflectX(f),
+    dir: f.axis === 'x' ? ((-f.dir) as 1 | -1) : f.dir
+  }));
+  check(`${type}: mirroring is an exact reflection of the flights`,
+    JSON.stringify(unmirroredFlights) === JSON.stringify(plain.flights),
+    `${JSON.stringify(unmirroredFlights)} vs ${JSON.stringify(plain.flights)}`);
+  const unmirroredLandings = mirrored.landings.map(reflectX);
+  check(`${type}: mirroring is an exact reflection of the landings`,
+    JSON.stringify(unmirroredLandings) === JSON.stringify(plain.landings));
+
+  if (type === 'l-shaped' || type === 'u-shaped') {
+    check(`${type}: mirroring actually changes the layout`,
+      JSON.stringify(plain.flights) !== JSON.stringify(mirrored.flights));
+  } else {
+    // Straight stairs have no turn to flip, so mirroring is a no-op.
+    check(`${type}: mirroring has no effect`,
+      JSON.stringify(plain.flights) === JSON.stringify(mirrored.flights) &&
+        JSON.stringify(plain.landings) === JSON.stringify(mirrored.landings));
+  }
+}
+
 // The footprint follows from the flight width, not the other way round.
 console.log('=== footprint from flight width ===');
 {

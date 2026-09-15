@@ -118,6 +118,14 @@ export interface Stair {
   direction: 'up' | 'down';
   stairType: StairType; // default 'straight'
   /**
+   * Flips which side the turn lands on for l-shaped/u-shaped stairs (e.g. a
+   * u-shaped stair's return flight moves to the other side of the well).
+   * Has no visible effect on straight/spiral stairs. Omitted means false.
+   * Distinct from `direction`, which only flips the plan arrow and never
+   * changes the geometry.
+   */
+  mirrored?: boolean;
+  /**
    * Which open sides get a railing. Omitted means both, so stairs are railed
    * by default — set 'none' to take the railings off a flight that runs
    * between two walls.
