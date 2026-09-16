@@ -22,11 +22,13 @@
  * nothing ever spills outside the box the user can click and select.
  *
  * Flights always ascend towards -y (the direction the "UP" arrow points), and
- * turns then continue towards +x. `direction` does not change the geometry —
- * it only flips which way the plan arrow points, since a "down" stair is the
- * same physical object seen from the storey above. The 3D geometry always
- * rises from the floor the stair belongs to, so it is never buried under the
- * ground plane.
+ * turns then continue towards +x — unless `stair.mirrored` is set, which
+ * flips the turn (and, for u-shaped stairs, which side each flight sits on)
+ * across the footprint's centre line. `direction` does not change the
+ * geometry — it only flips which way the plan arrow points, since a "down"
+ * stair is the same physical object seen from the storey above. The 3D
+ * geometry always rises from the floor the stair belongs to, so it is never
+ * buried under the ground plane.
  */
 import type { Stair, StairRailingSides } from '$lib/models/types';
 import { railingHeight, RAILING_POST_THICKNESS, type RailingPoint } from '$lib/utils/railings';
@@ -130,6 +132,24 @@ export function lShapedArmLength(width: number, depth: number): number {
   return Math.max(depth - width, width * 0.5);
 }
 
+/**
+ * Mirror a layout's flights and landings across the footprint's vertical
+ * centre line (x = 0), flipping which side of the well/corner the turn
+ * lands on. Used for `stair.mirrored`; the footprint, riser counts and
+ * heights are unchanged, only which side each flight sits on.
+ */
+function mirrorLayout(layout: StairLayout): StairLayout {
+  const mirrorX = <T extends StairRect>(r: T): T => ({ ...r, x: -(r.x + r.w) });
+  return {
+    ...layout,
+    flights: layout.flights.map((f) => ({
+      ...mirrorX(f),
+      dir: f.axis === 'x' ? ((-f.dir) as 1 | -1) : f.dir
+    })),
+    landings: layout.landings.map(mirrorX)
+  };
+}
+
 /** Width of the well-hole between the two flights of a U-shaped stair. */
 export function uShapedWellGap(width: number): number {
   return width * 0.1;
@@ -224,7 +244,7 @@ export function buildStairLayout(
     // flight runs up along -y beside it, the second turns and heads along +x.
     const arm = lShapedArmLength(w, d);
     const [n1, n2] = splitRisers(n, arm, arm);
-    return {
+    const layout: StairLayout = {
       type: 'l-shaped',
       flights: [
         {
@@ -239,6 +259,7 @@ export function buildStairLayout(
       landings: [{ x: -hx, y: -hy, w, h: w, atRiser: n1 }],
       ...common
     };
+    return stair.mirrored ? mirrorLayout(layout) : layout;
   }
 
   if (type === 'u-shaped') {
@@ -246,7 +267,7 @@ export function buildStairLayout(
     const landingDepth = uShapedLandingDepth(w, d);
     const runLen = footprint.depth - landingDepth;
     const [n1, n2] = splitRisers(n, runLen, runLen);
-    return {
+    const layout: StairLayout = {
       type: 'u-shaped',
       flights: [
         {
@@ -261,6 +282,7 @@ export function buildStairLayout(
       landings: [{ x: -hx, y: -hy, w: footprint.width, h: landingDepth, atRiser: n1 }],
       ...common
     };
+    return stair.mirrored ? mirrorLayout(layout) : layout;
   }
 
   return {
