@@ -1046,12 +1046,12 @@
   }
 
   /** Build a placed/preview furniture model — routes user-imported models to their own loader. */
-  function buildFurnitureModel(catalogId: string, def: FurnitureDef, onLoaded?: (model: THREE.Group) => void): THREE.Group {
+  function buildFurnitureModel(catalogId: string, def: FurnitureDef, onLoaded?: (model: THREE.Group) => void, exactSize = false): THREE.Group {
     if (isCustomFurnitureId(catalogId)) {
       const customDef = getCustomFurnitureDef(catalogId)!;
       return createCustomFurnitureModel(customDef, onLoaded);
     }
-    return createFurnitureModelWithGLB(catalogId, def, onLoaded);
+    return createFurnitureModelWithGLB(catalogId, def, onLoaded, exactSize);
   }
 
   function createGhostPreview(catalogId: string) {
@@ -2237,10 +2237,20 @@
         depth: fi.depth ?? cat.depth,
         height: fi.height ?? cat.height,
       };
+      // Any explicit dimension means the user has actually resized this
+      // instance (handle drag or the properties panel), not just placed it
+      // at catalog defaults — honour that exact footprint on every axis
+      // instead of the GLB's proportion-preserving default, which stretching
+      // only one axis (say, width) would otherwise leave completely
+      // unscaled whenever the unchanged axes' ratios came out smaller.
+      const hasCustomSize = fi.width != null || fi.depth != null || fi.height != null;
       const model = buildFurnitureModel(fi.catalogId, furnitureDef, () => {
-        // Re-render when GLB model finishes loading
+        // The GLB swap lands after this loop already sized the selection
+        // box off the procedural placeholder — refresh it so a selected
+        // item's box matches what actually rendered, not the placeholder.
+        refreshSelectionBox();
         if (renderer && scene && camera) renderer.render(scene, camera);
-      });
+      }, hasCustomSize);
       model.position.set(fi.position.x, FURNITURE_BASE_Y + (fi.elevation ?? 0), fi.position.y);
       model.rotation.y = -(fi.rotation * Math.PI) / 180;
       // Note: fi.scale is 2D editor scale — don't override 3D model scaling from scaleToFit

@@ -323,7 +323,7 @@ function loadGLBModel(catalogId: string): Promise<THREE.Group | null> {
  * Scale a GLB model to match our catalog dimensions.
  * Kenney models are unit-scale (~1m tall). We need to match our cm dimensions.
  */
-function scaleToFit(model: THREE.Group, def: FurnitureDef, mapping: ModelMapping): void {
+function scaleToFit(model: THREE.Group, def: FurnitureDef, mapping: ModelMapping, exactSize = false): void {
   // Compute the model's bounding box
   const box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3();
@@ -348,10 +348,17 @@ function scaleToFit(model: THREE.Group, def: FurnitureDef, mapping: ModelMapping
   const scaleY = def.height / size.y;
   const scaleZ = def.depth / size.z;
 
-  if (mapping.stretch) {
-    // Explicit opt-in: fill the exact footprint even if it distorts proportions.
-    // Reserved for flat, shape-agnostic items (rugs, doormats) where the
-    // "shape" is just a rectangle and non-uniform scaling isn't visible as distortion.
+  if (mapping.stretch || exactSize) {
+    // Fill the exact footprint even if it distorts proportions. Flat,
+    // shape-agnostic items (rugs, doormats) opt into this by default via
+    // `mapping.stretch`. `exactSize` opts a specific placed instance in the
+    // same way: once the user has explicitly resized it (a real, deliberate
+    // footprint request — not just whatever the catalog's nominal box
+    // happens to be), honouring that request on every axis matters more
+    // than protecting the model's native proportions. Without this, a
+    // width-only resize left height/depth's ratio at 1 and the uniform
+    // scale below — driven by the smallest ratio — kept the model exactly
+    // its original size no matter how far the item was stretched.
     model.scale.set(scaleX, scaleY, scaleZ);
   } else {
     // Default: uniform scaling preserves the model's real proportions.
@@ -382,7 +389,8 @@ function scaleToFit(model: THREE.Group, def: FurnitureDef, mapping: ModelMapping
 export function createFurnitureModelWithGLB(
   catalogId: string,
   def: FurnitureDef,
-  onLoaded?: (model: THREE.Group) => void
+  onLoaded?: (model: THREE.Group) => void,
+  exactSize = false
 ): THREE.Group {
   const container = new THREE.Group();
   container.name = `furniture_${catalogId}`;
@@ -406,7 +414,7 @@ export function createFurnitureModelWithGLB(
               else obj.material.dispose();
             }
           });
-          scaleToFit(glbModel, def, mapping);
+          scaleToFit(glbModel, def, mapping, exactSize);
           container.add(glbModel);
           onLoaded?.(container);
         } catch (err) {
