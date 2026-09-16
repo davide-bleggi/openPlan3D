@@ -1027,7 +1027,14 @@
     // Textured floor
     const floorTex = createFloorTexture();
     const floorGeo = new THREE.PlaneGeometry(4000, 4000);
-    const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, side: THREE.DoubleSide, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    // No polygon offset here: pulling this plane toward the camera (as a negative
+    // offset would) is exactly what let it win the depth test against the room
+    // floor (y=5) and furniture (y=1.5+) once the camera sat far enough away for
+    // depth-buffer precision to swallow that few-centimetre gap — furniture would
+    // vanish behind the plain textured floor until you zoomed in close. The real
+    // world-space gap to the ground plane 10cm below is already enough on its own,
+    // reinforced by the ground plane's own offset pushing it away (see groundMat).
+    const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, side: THREE.DoubleSide, roughness: 0.8 });
     const floorMesh = new THREE.Mesh(floorGeo, floorMat);
     floorMesh.rotation.x = -Math.PI / 2;
     floorMesh.position.y = 0;
@@ -1039,12 +1046,12 @@
   }
 
   /** Build a placed/preview furniture model — routes user-imported models to their own loader. */
-  function buildFurnitureModel(catalogId: string, def: FurnitureDef, onLoaded?: (model: THREE.Group) => void): THREE.Group {
+  function buildFurnitureModel(catalogId: string, def: FurnitureDef, onLoaded?: (model: THREE.Group) => void, exactSize = false): THREE.Group {
     if (isCustomFurnitureId(catalogId)) {
       const customDef = getCustomFurnitureDef(catalogId)!;
       return createCustomFurnitureModel(customDef, onLoaded);
     }
-    return createFurnitureModelWithGLB(catalogId, def, onLoaded);
+    return createFurnitureModelWithGLB(catalogId, def, onLoaded, exactSize);
   }
 
   function createGhostPreview(catalogId: string) {
@@ -1720,7 +1727,7 @@
     furnitureRoots.clear();
     selectionBox = null;   // cleared with the group above
 
-    const defaultInteriorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const defaultInteriorMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
     const defaultExteriorMat = new THREE.MeshStandardMaterial({ color: 0xd4cfc9, roughness: 0.85 });
     const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d4, roughness: 0.7 });
     const { joins: wallJoins, voids: wallVoids } = computeWallJoins(floor.walls);
@@ -1744,14 +1751,13 @@
       const DEFAULT_2D_COLORS = ['#cccccc', '#888888', '#444444', '#404040'];
       const wLen = Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y);
 
-      function resolveWallMat(color: string | undefined, texture: string | undefined, fallback: THREE.MeshStandardMaterial, isInterior: boolean = false): THREE.MeshStandardMaterial {
-        const polyOff = isInterior ? { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 } : {};
+      function resolveWallMat(color: string | undefined, texture: string | undefined, fallback: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
         if (texture) {
           const tex = generateWallTexture(texture, color || '#888888', wLen, wall.height);
-          return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, ...polyOff });
+          return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 });
         }
         if (color && !DEFAULT_2D_COLORS.includes(color.toLowerCase())) {
-          return new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.9, ...polyOff });
+          return new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.9 });
         }
         return fallback;
       }
@@ -1762,8 +1768,7 @@
       let interiorMat = resolveWallMat(
         wall.interiorColor || wall.color,
         intTex,
-        defaultInteriorMat,
-        true
+        defaultInteriorMat
       );
       // Exterior: use exteriorColor/exteriorTexture if set, else fall back to wall.color/wall.texture (auto-darkened)
       const extTex = wall.exteriorTexture === 'none' ? undefined : (wall.exteriorTexture || wall.texture);
@@ -2232,10 +2237,20 @@
         depth: fi.depth ?? cat.depth,
         height: fi.height ?? cat.height,
       };
+      // Any explicit dimension means the user has actually resized this
+      // instance (handle drag or the properties panel), not just placed it
+      // at catalog defaults — honour that exact footprint on every axis
+      // instead of the GLB's proportion-preserving default, which stretching
+      // only one axis (say, width) would otherwise leave completely
+      // unscaled whenever the unchanged axes' ratios came out smaller.
+      const hasCustomSize = fi.width != null || fi.depth != null || fi.height != null;
       const model = buildFurnitureModel(fi.catalogId, furnitureDef, () => {
-        // Re-render when GLB model finishes loading
+        // The GLB swap lands after this loop already sized the selection
+        // box off the procedural placeholder — refresh it so a selected
+        // item's box matches what actually rendered, not the placeholder.
+        refreshSelectionBox();
         if (renderer && scene && camera) renderer.render(scene, camera);
-      });
+      }, hasCustomSize);
       model.position.set(fi.position.x, FURNITURE_BASE_Y + (fi.elevation ?? 0), fi.position.y);
       model.rotation.y = -(fi.rotation * Math.PI) / 180;
       // Note: fi.scale is 2D editor scale — don't override 3D model scaling from scaleToFit
