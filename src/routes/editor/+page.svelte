@@ -117,8 +117,11 @@
   viewMode.subscribe((m) => {
     mode = m;
     if (m === '3d') {
-      // Clear selection when entering 3D — start in view-only mode
-      selectedElementId.set(null);
+      // Room selection and elevation-picking are 2D-only concepts; a wall or
+      // furniture selection, though, carries over on purpose — it's what lets
+      // the 3D view highlight the item you were just editing in 2D (its
+      // selection outline draws through walls) instead of making you hunt for
+      // it again by eye.
       selectedRoomId.set(null);
       elevationPickMode.set(false);
       // Onboarding tip for first 3D view
